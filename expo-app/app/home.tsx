@@ -1328,8 +1328,8 @@ function ProviderHome({
         </TouchableOpacity>
         <PowerStatusSwitch
           isOnline={isOnline}
-          offlineText={availabilitySaving ? "جارٍ التحديث..." : "غير متصل"}
-          onlineText="متصل"
+          offlineText={availabilitySaving ? "جارٍ التحديث..." : "مغلق"}
+          onlineText="مفتوح"
           activeColor="#0F766E"
           scaleFn={scaleSize}
           disabled={!verified || availabilitySaving || (walletBlocked && !available)}
