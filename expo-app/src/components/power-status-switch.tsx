@@ -21,10 +21,10 @@ export function PowerStatusSwitch({
   onToggle,
   disabled = false,
 }: Props) {
-  const width = scaleFn(212);
-  const height = scaleFn(70);
-  const padding = scaleFn(6);
-  const knobSize = scaleFn(58);
+  const width = scaleFn(228);
+  const height = scaleFn(78);
+  const padding = scaleFn(7);
+  const knobSize = scaleFn(64);
   const travelDistance = width - knobSize - padding * 2;
   const progress = useRef(new Animated.Value(isOnline ? 1 : 0)).current;
   const rotation = useRef(new Animated.Value(0)).current;
@@ -119,28 +119,28 @@ export function PowerStatusSwitch({
 
 const styles = StyleSheet.create({
   track: {
-    borderWidth: 1,
+    borderWidth: 2,
     justifyContent: "center",
     alignItems: "center",
     elevation: 3,
     shadowColor: "#0F172A",
-    shadowOpacity: 0.16,
-    shadowRadius: 9,
-    shadowOffset: { width: 0, height: 3 },
-    transform: [{ translateY: -8 }],
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    transform: [{ translateY: -10 }],
   },
-  label: { fontSize: 15, fontWeight: "900", paddingHorizontal: 68 },
+  label: { fontSize: 18, fontWeight: "900", letterSpacing: 0.2, paddingHorizontal: 74, textAlign: "center", includeFontPadding: true },
   knob: {
     position: "absolute",
-    top: 6,
+    top: 7,
     backgroundColor: "#FFFFFF",
-    borderWidth: 1.5,
+    borderWidth: 2,
     alignItems: "center",
     justifyContent: "center",
     elevation: 4,
     shadowColor: "#0F172A",
-    shadowOpacity: 0.18,
-    shadowRadius: 5,
+    shadowOpacity: 0.24,
+    shadowRadius: 7,
     shadowOffset: { width: 0, height: 2 },
   },
   arc: { position: "absolute", alignItems: "center", justifyContent: "center" },
