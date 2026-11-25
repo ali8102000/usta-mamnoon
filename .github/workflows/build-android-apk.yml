@@ -1,4 +1,5 @@
 name: Build Android APK (GitHub Actions)
+# Rebuild with the current repository secrets.
 
 on:
   push:
