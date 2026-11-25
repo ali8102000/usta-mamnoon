@@ -1121,7 +1121,7 @@ function ProviderHome({
   toggleAvailable: () => void;
   incoming: IncomingRequest[];
 }) {
-  const googleMapsConfigured = Constants.expoConfig?.extra?.googleMapsConfigured === true;
+  const googleMapsConfigured = Boolean(process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY) || Constants.expoConfig?.extra?.googleMapsConfigured === true;
   const insets = useSafeAreaInsets();
   const topOffset = Math.max(insets.top, 28);
   const bottomOffset = Math.max(insets.bottom, 8);
