@@ -1,10 +1,11 @@
-import { Redirect } from "expo-router";
+import { Redirect, type Href } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import { useAuth } from "@/lib/auth-context";
 import mamnoonLogo from "../assets/mamnoon-logo.png";
 import { useCompanyBranding } from "@/lib/company-branding";
+import { APP_VARIANT } from "@/lib/app-variant";
 import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, View, ActivityIndicator, Image, Text, StyleSheet, Animated, Easing } from "react-native";
 
@@ -45,7 +46,7 @@ export default function Index() {
     loop.start();
     return () => loop.stop();
   }, [shouldAnimateBranding, welcomeVisualUrl, visualScale]);
-  const [nextRoute, setNextRoute] = useState<"/select-governorate" | "/auth" | "/home" | "/admin/bootstrap" | null>(null);
+  const [nextRoute, setNextRoute] = useState<Href | null>(null);
 
   // Do not add an artificial splash delay; route as soon as auth is ready.
   useEffect(() => {
@@ -63,7 +64,23 @@ export default function Index() {
               SecureStore.getItemAsync("mamnoon_governorate"),
               new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
             ]);
-        if (active) setNextRoute(saved ? (session ? (roles.includes("super_admin") ? "/admin/bootstrap" : "/home") : "/auth") : "/select-governorate");
+        if (active) {
+          if (!saved) {
+            setNextRoute("/select-governorate");
+          } else if (!session) {
+            setNextRoute("/auth");
+          } else if (roles.includes("super_admin")) {
+            setNextRoute("/admin/bootstrap");
+          } else if (APP_VARIANT === "worker" && !roles.includes("worker")) {
+            setNextRoute("/onboarding/worker");
+          } else if (APP_VARIANT === "driver" && !roles.includes("driver")) {
+            setNextRoute({ pathname: "/onboarding/driver", params: { providerType: "driver" } });
+          } else if (APP_VARIANT === "large_driver" && !roles.includes("large_driver")) {
+            setNextRoute({ pathname: "/onboarding/driver", params: { providerType: "large_driver" } });
+          } else {
+            setNextRoute("/home");
+          }
+        }
       } catch (error) {
         console.warn("[startup] Saved governorate unavailable; opening safe selection:", error);
         if (active) setNextRoute("/select-governorate");
