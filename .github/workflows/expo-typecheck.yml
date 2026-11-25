@@ -1,6 +1,11 @@
 name: Expo TypeScript check
 
 on:
+  push:
+    branches: [feature/app-role-separation]
+    paths:
+      - "expo-app/**"
+      - ".github/workflows/expo-typecheck.yml"
   pull_request:
     branches: [main]
     paths:
