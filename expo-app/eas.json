@@ -7,7 +7,7 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "node": "22.14.0"
+      "node": "26.0.0"
     },
     "preview": {
       "distribution": "internal",
@@ -15,7 +15,7 @@
         "buildType": "apk"
       },
       "environment": "production",
-      "node": "22.14.0"
+      "node": "26.0.0"
     },
     "production": {
       "autoIncrement": true,
@@ -27,7 +27,7 @@
       "android": {
         "buildType": "app-bundle"
       },
-      "node": "22.14.0"
+      "node": "26.0.0"
     }
   },
   "submit": {
