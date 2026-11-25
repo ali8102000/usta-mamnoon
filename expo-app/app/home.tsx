@@ -61,7 +61,7 @@ type IncomingRequest = {
 };
 
 export default function HomeScreen() {
-  const { user, profile, roles, activeRole } = useAuth();
+  const { user, profile, roles } = useAuth();
   // Each installed app is a separate product. Never fall back to the customer
   // dashboard when provider roles are still loading or an account is awaiting approval.
   const selectedRole = APP_VARIANT;
