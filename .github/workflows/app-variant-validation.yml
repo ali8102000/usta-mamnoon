@@ -1,6 +1,11 @@
 name: Validate app identity and role isolation
 
 on:
+  push:
+    branches: [feature/app-role-separation]
+    paths:
+      - "expo-app/**"
+      - ".github/workflows/app-variant-validation.yml"
   pull_request:
     branches: [main]
     paths:
