@@ -1,0 +1,47 @@
+name: Validate app identity
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "expo-app/app.json"
+      - ".github/workflows/app-variant-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate app variant and install identity
+        env:
+          EXPECTED_VARIANT: "worker"
+          EXPECTED_PACKAGE: "com.mamnoon.usta"
+          REQUIRE_CUSTOMER_EAS_ID: "false"
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const config = JSON.parse(fs.readFileSync("expo-app/app.json", "utf8")).expo;
+          const expectedVariant = process.env.EXPECTED_VARIANT;
+          const expectedPackage = process.env.EXPECTED_PACKAGE;
+          if (config.extra?.appVariant !== expectedVariant) {
+            throw new Error(`Expected appVariant ${expectedVariant}, got ${config.extra?.appVariant ?? "missing"}`);
+          }
+          if (config.android?.package !== expectedPackage) {
+            throw new Error(`Unexpected Android package: ${config.android?.package}`);
+          }
+          if (config.ios?.bundleIdentifier !== expectedPackage) {
+            throw new Error(`Unexpected iOS bundle identifier: ${config.ios?.bundleIdentifier}`);
+          }
+          const easProjectId = config.extra?.eas?.projectId;
+          if (process.env.REQUIRE_CUSTOMER_EAS_ID === "true" && easProjectId !== "a6c763c4-3a5c-4725-b370-81967e3c0aab") {
+            throw new Error("Customer app must retain its original Expo project ID.");
+          }
+          if (process.env.REQUIRE_CUSTOMER_EAS_ID !== "true" && easProjectId) {
+            throw new Error("Provider apps must not reuse the customer Expo project ID.");
+          }
+          console.log(`Validated ${expectedVariant}: ${expectedPackage}`);
+          NODE
