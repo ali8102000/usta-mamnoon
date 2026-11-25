@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import Constants from "expo-constants";
 import { useRef } from "react";
 import { Animated, Easing, PanResponder } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -1120,11 +1121,12 @@ function ProviderHome({
   toggleAvailable: () => void;
   incoming: IncomingRequest[];
 }) {
+  const googleMapsConfigured = Constants.expoConfig?.extra?.googleMapsConfigured === true;
   const insets = useSafeAreaInsets();
   const topOffset = Math.max(insets.top, 28);
   const bottomOffset = Math.max(insets.bottom, 8);
   const mapRef = useRef<MapView | null>(null);
-  const [mapReady, setMapReady] = useState(false);
+  const [mapReady, setMapReady] = useState(!googleMapsConfigured);
   const [followUser, setFollowUser] = useState(true);
   const [currentCoords, setCurrentCoords] = useState<{ latitude: number; longitude: number; heading?: number | null } | null>(null);
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
@@ -1227,6 +1229,7 @@ function ProviderHome({
 
   return (
     <View style={providerMapStyles.screen}>
+      {googleMapsConfigured ? (
       <MapView
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
@@ -1250,6 +1253,11 @@ function ProviderHome({
           />
         ) : null}
       </MapView>
+      ) : (
+        <View style={[StyleSheet.absoluteFill, providerMapStyles.mapFallback]}>
+          <Text style={providerMapStyles.mapFallbackText}>الخريطة غير متاحة حالياً، سيتم تفعيلها بعد إعداد خدمة الخرائط</Text>
+        </View>
+      )}
 
       {!mapReady && (
         <View pointerEvents="none" style={providerMapStyles.mapLoading}>
@@ -1344,6 +1352,8 @@ function ProviderHome({
 }
 const providerMapStyles = StyleSheet.create({
   screen: { flex: 1, width: "100%", backgroundColor: "#E8EEF3" },
+  mapFallback: { alignItems: "center", justifyContent: "center", paddingHorizontal: 28, backgroundColor: "#E8EEF3" },
+  mapFallbackText: { color: "#334155", fontSize: 14, fontWeight: "800", textAlign: "center", lineHeight: 24 },
   mapLoading: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(238,243,247,0.65)", zIndex: 2 },
   mapLoadingText: { color: "#334155", fontSize: 13, fontWeight: "800" },
   vehicleMarker: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#FFFFFF", borderWidth: 3, borderColor: "#1D4ED8", alignItems: "center", justifyContent: "center", elevation: 8 },
