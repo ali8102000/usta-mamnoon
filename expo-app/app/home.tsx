@@ -1322,7 +1322,7 @@ function ProviderHome({
         </View>
       )}
 
-      <View style={[providerMapStyles.bottomBar, { bottom: Math.max(insets.bottom, 8) + 4 }]}>
+      <View style={[providerMapStyles.bottomBar, { bottom: Math.max(insets.bottom, 8) + 8 }]}>
         <TouchableOpacity onPress={() => router.push("/support-chat")} style={providerMapStyles.footerAction} accessibilityRole="button">
           <Text style={providerMapStyles.footerActionText}>مساعدة</Text>
         </TouchableOpacity>
@@ -1370,8 +1370,8 @@ const providerMapStyles = StyleSheet.create({
   mapAttribution: { position: "absolute", left: 8, color: "#334155", backgroundColor: "rgba(255,255,255,0.82)", paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, fontSize: 9, fontWeight: "800", zIndex: 3 },
   offlineNotice: { position: "absolute", left: 12, right: 12, height: 44, borderRadius: 22, backgroundColor: "#1D4ED8", alignItems: "center", justifyContent: "center", paddingHorizontal: 14, elevation: 5 },
   offlineNoticeText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900", textAlign: "center" },
-  bottomBar: { position: "absolute", left: 0, right: 0, height: 72, direction: "ltr", backgroundColor: "#FFFFFF", borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between", elevation: 12, shadowColor: "#0F172A", shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: -3 } },
-  footerAction: { width: 76, height: 44, alignItems: "center", justifyContent: "center" },
+  bottomBar: { position: "absolute", left: 0, right: 0, height: 82, direction: "ltr", backgroundColor: "#FFFFFF", borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between", elevation: 12, shadowColor: "#0F172A", shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: -3 } },
+  footerAction: { width: 76, height: 48, alignItems: "center", justifyContent: "center" },
   footerActionText: { color: "#17324D", fontSize: 11, fontWeight: "900" },
   powerButton: { width: 180, height: 52, borderRadius: 26, borderWidth: 1, borderColor: "#E1E7EF", alignItems: "center", justifyContent: "center", elevation: 2 },
   powerButtonOn: { backgroundColor: "#DCFCE7" },
