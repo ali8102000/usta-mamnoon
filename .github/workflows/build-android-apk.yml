@@ -1,0 +1,94 @@
+name: Build Android APK (GitHub Actions)
+
+on:
+  push:
+    branches: [feature/app-role-separation]
+    paths:
+      - ".github/workflows/build-android-apk.yml"
+      - "expo-app/**"
+      - "config/public-backend.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-apk:
+    name: Build worker APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: expo-app
+    env:
+      EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY }}
+    steps:
+      - name: Check out app source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: yarn
+          cache-dependency-path: expo-app/yarn.lock
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform and build tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Install Yarn and project dependencies
+        run: |
+          npm install --global yarn@1.22.22
+          yarn install --frozen-lockfile
+
+      - name: Verify app identity and Expo configuration
+        run: |
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const config = JSON.parse(fs.readFileSync("app.json", "utf8")).expo;
+          const expected = {
+            package: "com.mamnoon.usta",
+            variant: "worker"
+          };
+          if (config.android?.package !== expected.package) {
+            throw new Error(`Wrong Android package: ${config.android?.package}`);
+          }
+          if (config.extra?.appVariant !== expected.variant) {
+            throw new Error(`Wrong app variant: ${config.extra?.appVariant}`);
+          }
+          console.log(`Verified ${expected.variant}: ${expected.package}`);
+          NODE
+          npx expo config --type public --json > /tmp/expo-public-config.json
+          node -e "const c=require('/tmp/expo-public-config.json'); if(c.android?.package!=='com.mamnoon.usta') process.exit(1); console.log('Expo dynamic config validated')"
+
+      - name: Generate native Android project
+        env:
+          CI: "1"
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build installable debug APK
+        working-directory: expo-app/android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: usta-mamnoon-debug-apk
+          path: expo-app/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
