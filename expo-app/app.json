@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "ممنون",
-    "slug": "kfw",
+    "name": "أسطه ممنون",
+    "slug": "usta-mamnoon",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/mamnoon-logo.png",
-    "scheme": "mamnoon",
+    "scheme": "usta-mamnoon",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.mamnoon.app",
+      "bundleIdentifier": "com.mamnoon.usta",
       "config": {},
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "نحتاج موقعك لعرض الخدمات القريبة وتتبع الرحلات",
@@ -31,7 +31,7 @@
         "foregroundImage": "./assets/mamnoon-logo.png",
         "backgroundColor": "#f7f8f5"
       },
-      "package": "com.mamnoon.app",
+      "package": "com.mamnoon.usta",
       "config": {},
       "permissions": [
         "ACCESS_FINE_LOCATION",
@@ -57,11 +57,6 @@
         }
       ]
     ],
-    "extra": {
-      "eas": {
-        "projectId": "a6c763c4-3a5c-4725-b370-81967e3c0aab"
-      }
-    },
     "runtimeVersion": {
       "policy": "appVersion"
     }
