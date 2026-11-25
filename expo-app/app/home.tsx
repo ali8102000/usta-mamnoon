@@ -19,6 +19,7 @@ import {
 } from "react-native";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
+import { APP_VARIANT } from "@/lib/app-variant";
 import * as Location from "expo-location";
 import * as Haptics from "expo-haptics";
 import { getFreshProviderLocation, startProviderPresenceBackgroundLocation, stopProviderPresenceBackgroundLocation } from "@/lib/background-location";
@@ -61,9 +62,9 @@ type IncomingRequest = {
 
 export default function HomeScreen() {
   const { user, profile, roles, activeRole } = useAuth();
-  const selectedRole = activeRole && roles.includes(activeRole)
-    ? activeRole
-    : roles.includes("customer") ? "customer" : roles[0] || "customer";
+  // Each installed app is a separate product. Never fall back to the customer
+  // dashboard when provider roles are still loading or an account is awaiting approval.
+  const selectedRole = APP_VARIANT;
   const { resolved: resolvedTheme, setMode } = useThemePreference();
   const { companyName, logoUrl: companyLogoUrl, welcomeMessage, homeVisualUrl, homeVisualAnimated, homeVisualEnabled, homeVisualWidthPx, homeVisualHeightPx, homeVisualPosition, homeVisualLinkUrl } = useCompanyBranding();
 
