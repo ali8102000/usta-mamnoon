@@ -1,10 +1,10 @@
-name: Validate app identity
+name: Validate app identity and role isolation
 
 on:
   pull_request:
     branches: [main]
     paths:
-      - "expo-app/app.json"
+      - "expo-app/**"
       - ".github/workflows/app-variant-validation.yml"
   workflow_dispatch:
 
@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate app variant and install identity
+      - name: Validate app identity and role entry points
         env:
           EXPECTED_VARIANT: "worker"
           EXPECTED_PACKAGE: "com.mamnoon.usta"
@@ -25,23 +25,27 @@ jobs:
           node <<'NODE'
           const fs = require("node:fs");
           const config = JSON.parse(fs.readFileSync("expo-app/app.json", "utf8")).expo;
-          const expectedVariant = process.env.EXPECTED_VARIANT;
+          const variant = process.env.EXPECTED_VARIANT;
           const expectedPackage = process.env.EXPECTED_PACKAGE;
-          if (config.extra?.appVariant !== expectedVariant) {
-            throw new Error(`Expected appVariant ${expectedVariant}, got ${config.extra?.appVariant ?? "missing"}`);
-          }
-          if (config.android?.package !== expectedPackage) {
-            throw new Error(`Unexpected Android package: ${config.android?.package}`);
-          }
-          if (config.ios?.bundleIdentifier !== expectedPackage) {
-            throw new Error(`Unexpected iOS bundle identifier: ${config.ios?.bundleIdentifier}`);
-          }
+          if (config.extra?.appVariant !== variant) throw new Error("Incorrect appVariant");
+          if (config.android?.package !== expectedPackage) throw new Error("Incorrect Android package");
+          if (config.ios?.bundleIdentifier !== expectedPackage) throw new Error("Incorrect iOS bundle identifier");
           const easProjectId = config.extra?.eas?.projectId;
           if (process.env.REQUIRE_CUSTOMER_EAS_ID === "true" && easProjectId !== "a6c763c4-3a5c-4725-b370-81967e3c0aab") {
-            throw new Error("Customer app must retain its original Expo project ID.");
+            throw new Error("Customer app must retain its original Expo project ID");
           }
           if (process.env.REQUIRE_CUSTOMER_EAS_ID !== "true" && easProjectId) {
-            throw new Error("Provider apps must not reuse the customer Expo project ID.");
+            throw new Error("Provider apps must not reuse the customer Expo project ID");
           }
-          console.log(`Validated ${expectedVariant}: ${expectedPackage}`);
+          const variantSource = fs.readFileSync("expo-app/src/lib/app-variant.ts", "utf8");
+          const authSource = fs.readFileSync("expo-app/src/lib/auth-context.tsx", "utf8");
+          const indexSource = fs.readFileSync("expo-app/app/index.tsx", "utf8");
+          if (!variantSource.includes("Constants.expoConfig?.extra?.appVariant")) throw new Error("Runtime app variant is not wired");
+          if (!authSource.includes("filterRolesForApp") || !authSource.includes("isRoleAllowedInApp")) throw new Error("Role isolation is missing from auth context");
+          if (!indexSource.includes("APP_VARIANT")) throw new Error("Role-specific startup routing is missing");
+          if (variant !== "customer" && !indexSource.includes(`APP_VARIANT === "${variant}"`)) throw new Error("The app's onboarding route is missing");
+          if (variant !== "customer" && !fs.readFileSync("expo-app/app/auth.tsx", "utf8").includes('router.replace("/");')) {
+            throw new Error("New provider signup must return through role-specific startup routing");
+          }
+          console.log(`Validated ${variant} app identity and role entry points`);
           NODE
