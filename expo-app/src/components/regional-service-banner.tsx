@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Animated, Easing, Image, ScrollView, Text, View, StyleSheet, Pressable } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, usePathname } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import * as Location from "expo-location";
 import { callMamnoonMapsApi } from "@/lib/maps-api";
@@ -18,11 +18,14 @@ type Row = {
 export function RegionalServiceBanner() {
   const { isAdmin, loading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+  const isAuthRoute = pathname === "/auth" || pathname.startsWith("/auth/");
   const [row, setRow] = useState<Row | null>(null);
   const translate = useState(() => new Animated.Value(0))[0];
   const [marqueeWidth, setMarqueeWidth] = useState(0);
   const [textWidth, setTextWidth] = useState(0);
   useEffect(() => {
+    if (isAuthRoute) { setRow(null); return; }
     if (loading) return;
     if (isAdmin) { setRow(null); return; }
     let active = true;
@@ -63,7 +66,7 @@ export function RegionalServiceBanner() {
     // Polling avoids a long-lived Realtime channel across Android remounts.
     const timer = setInterval(() => void load(), 30000);
     return () => { active = false; clearInterval(timer); };
-  }, [isAdmin, loading]);
+  }, [isAdmin, loading, isAuthRoute]);
   const text = row?.message_text || (row && !row.services_enabled ? "سنصل إليك قريباً. الخدمة غير متوفرة حالياً في مدينتك." : "");
   useEffect(() => {
     if (!row?.message_animate || (!row.message_enabled && row.services_enabled) || marqueeWidth <= 0 || textWidth <= 0) return;
@@ -75,7 +78,7 @@ export function RegionalServiceBanner() {
     animation.start();
     return () => animation.stop();
   }, [row?.message_animate, row?.message_enabled, row?.services_enabled, row?.message_text, marqueeWidth, textWidth, translate]);
-  if (loading || isAdmin || !row || (row.message_float_enabled === false && row.services_enabled) || (row.services_enabled && !row.message_enabled) || !text) return null;
+  if (isAuthRoute || loading || isAdmin || !row || (row.message_float_enabled === false && row.services_enabled) || (row.services_enabled && !row.message_enabled) || !text) return null;
   const width = Math.max(60, Math.min(100, row.message_width_percent ?? 92));
   const height = Math.max(12, Math.min(60, row.message_height_percent ?? 34));
   const top = Math.max(0, Math.min(160, row.message_top_offset ?? 12));
