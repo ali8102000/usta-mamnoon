@@ -25,7 +25,7 @@ jobs:
         env:
           EXPECTED_VARIANT: "worker"
           EXPECTED_PACKAGE: "com.mamnoon.usta"
-          REQUIRE_CUSTOMER_EAS_ID: "false"
+          EXPECTED_EAS_PROJECT_ID: "28393988-2688-4390-a78c-069475db2178"
         run: |
           node <<'NODE'
           const fs = require("node:fs");
@@ -36,11 +36,9 @@ jobs:
           if (config.android?.package !== expectedPackage) throw new Error("Incorrect Android package");
           if (config.ios?.bundleIdentifier !== expectedPackage) throw new Error("Incorrect iOS bundle identifier");
           const easProjectId = config.extra?.eas?.projectId;
-          if (process.env.REQUIRE_CUSTOMER_EAS_ID === "true" && easProjectId !== "a6c763c4-3a5c-4725-b370-81967e3c0aab") {
-            throw new Error("Customer app must retain its original Expo project ID");
-          }
-          if (process.env.REQUIRE_CUSTOMER_EAS_ID !== "true" && easProjectId === "a6c763c4-3a5c-4725-b370-81967e3c0aab") {
-            throw new Error("Provider apps must not reuse the customer Expo project ID");
+          const expectedEasProjectId = process.env.EXPECTED_EAS_PROJECT_ID;
+          if (!easProjectId || easProjectId !== expectedEasProjectId) {
+            throw new Error("Incorrect or missing Expo project ID for this app variant");
           }
           const variantSource = fs.readFileSync("expo-app/src/lib/app-variant.ts", "utf8");
           const authSource = fs.readFileSync("expo-app/src/lib/auth-context.tsx", "utf8");
