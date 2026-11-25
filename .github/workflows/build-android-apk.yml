@@ -84,9 +84,9 @@ jobs:
           CI: "1"
         run: npx expo prebuild --platform android --no-install
 
-      - name: Build installable debug APK
+      - name: Build standalone release APK
         working-directory: expo-app/android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Sign APK with Android APK Signature Scheme v2/v3
         working-directory: expo-app/android
@@ -95,7 +95,8 @@ jobs:
         run: |
           set -euo pipefail
           BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
           test -s "$APK"
           keytool -genkeypair -v \
             -keystore "$RUNNER_TEMP/mamnoon-debug.keystore" \
@@ -112,12 +113,12 @@ jobs:
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$RUNNER_TEMP/app-signed.apk"
           "$BUILD_TOOLS/aapt" dump badging "$RUNNER_TEMP/app-signed.apk" | head -n 3
           mkdir -p app/build/outputs/apk/verified
-          cp "$RUNNER_TEMP/app-signed.apk" app/build/outputs/apk/verified/app-debug-signed.apk
+          cp "$RUNNER_TEMP/app-signed.apk" app/build/outputs/apk/verified/app-release-standalone.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: usta-mamnoon-debug-apk
-          path: expo-app/android/app/build/outputs/apk/verified/app-debug-signed.apk
+          name: usta-mamnoon-standalone-release-apk
+          path: expo-app/android/app/build/outputs/apk/verified/app-release-standalone.apk
           if-no-files-found: error
           retention-days: 14
