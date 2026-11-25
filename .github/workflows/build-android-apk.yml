@@ -78,7 +78,13 @@ jobs:
           console.log(`Verified ${expected.variant}: ${expected.package}`);
           NODE
           npx expo config --type public --json > /tmp/expo-public-config.json
-          node -e "const c=require('/tmp/expo-public-config.json'); if(c.android?.package!=='com.mamnoon.usta') process.exit(1); console.log('Expo dynamic config validated')"
+          node - <<'NODE'
+          const c = require('/tmp/expo-public-config.json');
+          if (c.android?.package !== 'com.mamnoon.usta') throw new Error('Wrong Android package');
+          if (c.extra?.googleMapsConfigured !== true) throw new Error('Google Maps key was not embedded in Expo config');
+          if (!c.android?.config?.googleMaps?.apiKey) throw new Error('Google Maps Android API key missing from native config');
+          console.log('Expo identity and Google Maps configuration validated (key value hidden)');
+          NODE
 
       - name: Generate native Android project
         env:
