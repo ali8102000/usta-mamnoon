@@ -77,19 +77,40 @@ jobs:
           }
           console.log(`Verified ${expected.variant}: ${expected.package}`);
           NODE
-          npx expo config --type public --json > /tmp/expo-public-config.json
+          if [ -z "${EXPO_PUBLIC_GOOGLE_MAPS_API_KEY:-}" ]; then
+            echo "::error::EXPO_PUBLIC_GOOGLE_MAPS_API_KEY repository secret is missing or empty"
+            exit 1
+          fi
+          npx expo config --json > /tmp/expo-config.json
           node - <<'NODE'
-          const c = require('/tmp/expo-public-config.json');
+          const c = require('/tmp/expo-config.json');
           if (c.android?.package !== 'com.mamnoon.usta') throw new Error('Wrong Android package');
-          if (c.extra?.googleMapsConfigured !== true) throw new Error('Google Maps key was not embedded in Expo config');
-          if (!c.android?.config?.googleMaps?.apiKey) throw new Error('Google Maps Android API key missing from native config');
-          console.log('Expo identity and Google Maps configuration validated (key value hidden)');
+          if (c.extra?.googleMapsConfigured !== true) throw new Error('Google Maps key was not loaded by app.config.ts');
+          console.log('Expo identity and Maps environment validated (key value hidden)');
           NODE
 
       - name: Generate native Android project
         env:
           CI: "1"
         run: npx expo prebuild --platform android --no-install
+
+      - name: Verify Google Maps key in generated Android manifest
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          path = "android/app/src/main/AndroidManifest.xml"
+          root = ET.parse(path).getroot()
+          ns = "{http://schemas.android.com/apk/res/android}"
+          found = False
+          for item in root.findall("application/meta-data"):
+              if item.get(ns + "name") == "com.google.android.geo.API_KEY":
+                  value = item.get(ns + "value", "")
+                  found = bool(value and value.strip())
+                  break
+          if not found:
+              raise SystemExit("Google Maps API key was not written to AndroidManifest.xml")
+          print("Google Maps Android manifest metadata verified (key value hidden)")
+          PY
 
       - name: Build standalone release APK
         working-directory: expo-app/android
