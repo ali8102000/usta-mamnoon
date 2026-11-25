@@ -39,7 +39,7 @@ jobs:
           if (process.env.REQUIRE_CUSTOMER_EAS_ID === "true" && easProjectId !== "a6c763c4-3a5c-4725-b370-81967e3c0aab") {
             throw new Error("Customer app must retain its original Expo project ID");
           }
-          if (process.env.REQUIRE_CUSTOMER_EAS_ID !== "true" && easProjectId) {
+          if (process.env.REQUIRE_CUSTOMER_EAS_ID !== "true" && easProjectId === "a6c763c4-3a5c-4725-b370-81967e3c0aab") {
             throw new Error("Provider apps must not reuse the customer Expo project ID");
           }
           const variantSource = fs.readFileSync("expo-app/src/lib/app-variant.ts", "utf8");
