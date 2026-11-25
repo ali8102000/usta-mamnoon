@@ -1,0 +1,446 @@
+import { useState, useEffect } from "react";
+import { router } from "expo-router";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  Alert,
+  Image,
+} from "react-native";
+import * as ImagePicker from "expo-image-picker";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth-context";
+import { safeNavigate } from "@/lib/safe-navigation";
+import { Button } from "@/components/ui";
+import { getServiceImage } from "@/lib/service-visuals";
+import { palette, radius } from "@/styles/theme";
+
+type WorkerService = { id: string; slug: string; name_ar: string };
+const EXPERT_ONLY_SERVICE_SLUGS = new Set(["build", "plaster", "carpentry_form", "flooring", "chef", "plumbing", "electric_setup", "electric_street"]);
+type PickedImage = { uri: string; mimeType?: string | null; fileName?: string | null };
+type PhotoKind = "face" | "id-front" | "id-back";
+
+export default function WorkerOnboarding() {
+  const { user, refresh, setActiveRole } = useAuth();
+  const [companyName, setCompanyName] = useState("شركة ممنون");
+  const [services, setServices] = useState<WorkerService[]>([]);
+  const [servicesLoading, setServicesLoading] = useState(true);
+  const [servicesError, setServicesError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [level, setLevel] = useState<"fani" | "khabir">("fani");
+  const [bio, setBio] = useState("");
+  const [legalName, setLegalName] = useState(String(user?.user_metadata?.full_name ?? ""));
+  const [facePhoto, setFacePhoto] = useState<PickedImage | null>(null);
+  const [idFrontPhoto, setIdFrontPhoto] = useState<PickedImage | null>(null);
+  const [idBackPhoto, setIdBackPhoto] = useState<PickedImage | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [rejectionReason, setRejectionReason] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [approvedWorkerRole, setApprovedWorkerRole] = useState(false);
+  const [specialtyOnlyMode, setSpecialtyOnlyMode] = useState(false);
+  const [pendingSpecialtyChange, setPendingSpecialtyChange] = useState(false);
+  const canOfferExpertLevel = services.some((service) => selected.includes(service.id) && EXPERT_ONLY_SERVICE_SLUGS.has(service.slug));
+
+  useEffect(() => {
+    if (!canOfferExpertLevel && level === "khabir") setLevel("fani");
+  }, [canOfferExpertLevel, level]);
+
+  useEffect(() => {
+    (supabase as any).from("company_settings").select("company_name").eq("id", 1).maybeSingle()
+      .then(({ data }: any) => { if (data?.company_name) setCompanyName(data.company_name); });
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    setServicesLoading(true);
+    (async () => {
+      try {
+        const catalog = await supabase.rpc("get_worker_service_catalog");
+        let rows = !catalog.error && Array.isArray(catalog.data) ? catalog.data as WorkerService[] : [];
+        if (!rows.length) {
+          // Fallback to the authenticated services table if the RPC is not
+          // present yet in this Supabase deployment.
+          const fallback = await supabase.from("services")
+            .select("id, slug, name_ar")
+            .order("sort_order");
+          if (fallback.error) throw fallback.error;
+          rows = (fallback.data ?? []) as WorkerService[];
+        }
+        if (!active) return;
+        const available = rows.filter((s) => s.slug !== "taxi");
+        setServices(available);
+        setServicesError(available.length ? null : "قائمة المهن فارغة في قاعدة البيانات. يلزم تحديث كتالوج الخدمات.");
+      } catch (error: any) {
+        if (!active) return;
+        console.error("Unable to load worker service catalog:", error);
+        setServicesError(
+          /invalid api key/i.test(error?.message || "")
+            ? "مفتاح اتصال Supabase في نسخة التطبيق غير صالح أو قديم."
+            : `تعذر تحميل المهن (${error?.code || "اتصال"}): ${error?.message || "تحقق من اتصالك"}`,
+        );
+      } finally {
+        if (active) setServicesLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    setLegalName((current) => current || String(user.user_metadata?.full_name ?? ""));
+    let active = true;
+    Promise.all([
+      supabase.from("provider_verifications").select("status,rejection_reason")
+        .eq("user_id", user.id).eq("provider_type", "worker").maybeSingle(),
+      supabase.from("worker_profiles").select("status").eq("user_id", user.id).maybeSingle(),
+      supabase.from("user_roles").select("role").eq("user_id", user.id).eq("role", "worker").maybeSingle(),
+    ]).then(([verification, workerProfile, workerRole]) => {
+      if (!active) return;
+      // A granted worker role is authoritative proof of prior approval.
+      const approved = !!workerRole.data
+        || verification.data?.status === "approved"
+        || workerProfile.data?.status === "approved";
+      setApprovedWorkerRole(!!workerRole.data);
+      const resolvedStatus = approved
+        ? "approved"
+        : verification.data?.status ?? workerProfile.data?.status ?? null;
+      if (resolvedStatus) setStatus(resolvedStatus);
+      setRejectionReason(verification.data?.rejection_reason ?? null);
+    }).catch((error) => {
+      console.error("Unable to restore worker approval:", error);
+    });
+    return () => { active = false; };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !approvedWorkerRole) return;
+    let active = true;
+    (async () => {
+      const [activeServices, pendingRequest] = await Promise.all([
+        supabase.from("worker_services").select("service_id").eq("worker_id", user.id),
+        (supabase as any).from("provider_change_requests").select("id").eq("user_id", user.id).eq("provider_type", "worker").eq("status", "pending").maybeSingle(),
+      ]);
+      if (!active) return;
+      if (!activeServices.error) setSelected((activeServices.data ?? []).map((row: any) => row.service_id));
+      setPendingSpecialtyChange(!!pendingRequest.data);
+    })();
+    return () => { active = false; };
+  }, [user?.id, approvedWorkerRole]);
+
+  function toggleService(id: string) {
+    setSelected((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
+  }
+
+  async function pickPhoto(kind: PhotoKind, source: "camera" | "library" = "camera") {
+    try {
+      let result: ImagePicker.ImagePickerResult;
+      if (source === "camera") {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert("إذن الكاميرا", "اسمح للتطبيق باستخدام الكاميرا لإرفاق المستند.");
+          return;
+        }
+        result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ["images"],
+          // Avoid the Android system crop screen; confirmation is handled in Arabic in-app.
+          allowsEditing: false,
+          quality: 0.85,
+        });
+      } else {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert("إذن الصور", "اسمح للتطبيق بالوصول إلى الصور لاختيار المستند.");
+          return;
+        }
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ["images"],
+          // Avoid the system "قص" action and use the app's explicit confirmation instead.
+          allowsEditing: false,
+          quality: 0.8,
+        });
+      }
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      const picked = { uri: asset.uri, mimeType: asset.mimeType, fileName: asset.fileName };
+      const photoTitle = kind === "face" ? "الصورة الشخصية"
+        : kind === "id-front" ? "البطاقة الوطنية الأمامية" : "البطاقة الوطنية الخلفية";
+      Alert.alert("تأكيد الصورة", `تم اختيار ${photoTitle}. هل تريد اعتمادها؟`, [
+        { text: "إعادة الاختيار", style: "cancel" },
+        { text: "اعتماد الصورة", onPress: () => {
+          if (kind === "face") setFacePhoto(picked);
+          else if (kind === "id-front") setIdFrontPhoto(picked);
+          else setIdBackPhoto(picked);
+        } },
+      ]);
+    } catch {
+      Alert.alert("خطأ", "تعذر اختيار الصورة. حاول مرة أخرى.");
+    }
+  }
+
+  function choosePhoto(kind: PhotoKind) {
+    const title = kind === "face" ? "الصورة الشخصية" : kind === "id-front" ? "البطاقة الوطنية الأمامية" : "البطاقة الوطنية الخلفية";
+    Alert.alert(title, "اختَر طريقة إرفاق الصورة", [
+      { text: "تصوير بالكاميرا", onPress: () => { void pickPhoto(kind, "camera"); } },
+      { text: "اختيار من المعرض", onPress: () => { void pickPhoto(kind, "library"); } },
+      { text: "إلغاء", style: "cancel" },
+    ]);
+  }
+
+  async function uploadImage(image: PickedImage, kind: "face" | "id-card" | "id-card-back") {
+    if (!user) throw new Error("انتهت جلسة الدخول.");
+    const response = await fetch(image.uri);
+    const body = await response.arrayBuffer();
+    const mime = image.mimeType === "image/png" ? "image/png" : "image/jpeg";
+    const extension = mime === "image/png" ? "png" : "jpg";
+    const path = `${user.id}/worker/${kind}-${Date.now()}.${extension}`;
+    const { error } = await supabase.storage.from("provider-verification").upload(path, body, {
+      contentType: mime,
+      upsert: true,
+      cacheControl: "3600",
+    });
+    if (error) throw new Error(`تعذر حفظ الصورة: ${error.message}`);
+    return path;
+  }
+
+  async function submit() {
+    if (!user) {
+      Alert.alert("تسجيل الدخول مطلوب", "سجّل الدخول أولاً ثم أكمل تسجيل الفني.");
+      return;
+    }
+    if (servicesLoading || servicesError) {
+      Alert.alert("قائمة المهن", servicesError || "انتظر تحميل قائمة المهن أولاً.");
+      return;
+    }
+    if (selected.length === 0) {
+      Alert.alert("حدد مهنتك", "اختَر مهنة واحدة على الأقل حتى يعرف الزبون شنو الخدمة اللي تقدمها.");
+      return;
+    }
+    if (approvedWorkerRole && specialtyOnlyMode) {
+      setBusy(true);
+      try {
+        // Idempotently restore the worker role only if the database confirms approval.
+        const { data: roleGranted, error: roleError } = await supabase.rpc("grant_provider_role_safe", { _role: "worker" });
+        if (roleError) throw new Error(`تعذر التحقق من اعتماد حساب الفني: ${roleError.message}`);
+        if (roleGranted !== true) {
+          throw new Error("هذا المسار مخصص للفني المعتمد فقط. أكمل التسجيل الأولي إذا لم يسبق اعتماد حسابك.");
+        }
+        const { error } = await (supabase as any).rpc("submit_provider_change_request", {
+          _provider_type: "worker",
+          _requested_data: { service_ids: selected },
+        });
+        if (error) throw error;
+        setPendingSpecialtyChange(true);
+        setSpecialtyOnlyMode(false);
+        setStatus("approved");
+        Alert.alert("تم إرسال الطلب", "وصل طلب تحديث اختصاصاتك إلى الإدارة. اختصاصاتك الحالية تبقى فعالة لحين الموافقة.");
+      } catch (error: any) {
+        Alert.alert("تعذر إرسال الطلب", error?.message || "حاول مرة ثانية.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    if (legalName.trim().length < 5) {
+      Alert.alert("الاسم مطلوب", "اكتب الاسم الثلاثي واللقب كما هو في البطاقة الوطنية.");
+      return;
+    }
+    if (!facePhoto || !idFrontPhoto || !idBackPhoto) {
+      Alert.alert("المستمسكات مطلوبة", "أرفق الصورة الشخصية والبطاقة الوطنية من الأمام والخلف.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({ full_name: legalName.trim() })
+        .eq("id", user.id);
+      if (profileError) throw new Error(`تعذر حفظ الاسم: ${profileError.message}`);
+
+      const [facePath, idFrontPath, idBackPath] = await Promise.all([
+        uploadImage(facePhoto, "face"),
+        uploadImage(idFrontPhoto, "id-card"),
+        uploadImage(idBackPhoto, "id-card-back"),
+      ]);
+
+      const { error: verificationError } = await supabase.from("provider_verifications").upsert({
+        user_id: user.id,
+        provider_type: "worker",
+        legal_name: legalName.trim(),
+        phone: user.phone ?? null,
+        email: user.email ?? null,
+        face_photo_path: facePath,
+        id_card_photo_path: idFrontPath,
+        id_card_back_photo_path: idBackPath,
+        vehicle_document_path: null,
+        document_type: "national_id",
+        id_number: null,
+        metadata: { workerLevel: level, workerBio: bio.trim() || null, workerServices: selected },
+        status: "pending",
+        rejection_reason: null,
+        submitted_at: new Date().toISOString(),
+        reviewed_at: null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id,provider_type" });
+      if (verificationError) throw new Error(`تعذر حفظ مستمسكات التوثيق: ${verificationError.message}`);
+
+      const { error: workerError } = await supabase.from("worker_profiles").upsert({
+        user_id: user.id,
+        level,
+        bio: bio.trim() || null,
+        available: false,
+        status: "pending",
+      }, { onConflict: "user_id" });
+      if (workerError) throw workerError;
+
+      const { error: saveServicesError } = await (supabase as any).rpc("save_initial_worker_services", {
+        _service_ids: selected,
+      });
+      if (saveServicesError) throw saveServicesError;
+
+      setStatus("pending");
+      setRejectionReason(null);
+      await refresh();
+      Alert.alert("تم إرسال الطلب", "تم حفظ الصورة الشخصية والبطاقة الوطنية من الجهتين. طلبك الآن بانتظار موافقة " + companyName + ".");
+    } catch (err: unknown) {
+      Alert.alert("تعذر إكمال التسجيل", err instanceof Error ? err.message : "حدث خطأ غير متوقع.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (status === "pending" || status === "approved") {
+    return (
+      <View style={styles.statusContainer}>
+        <Text style={styles.title}>{status === "approved" ? "تم اعتماد حسابك كفني" : "طلبك قيد المراجعة"}</Text>
+        <Text style={styles.statusText}>
+          {status === "approved"
+            ? "تهانينا! تم تفعيل حسابك كفني بعد تدقيق مستمسكاتك. نرحب بك ضمن أسرة شركة ممنون الموثّقة ونتمنى لك التوفيق والنجاح."
+            : "استلمنا صورتك الشخصية والبطاقة الوطنية من الأمام والخلف. طلبك بانتظار موافقة " + companyName + "، وستتمكن من استقبال الطلبات بعد الاعتماد."}
+        </Text>
+        {status === "pending" ? (
+          <Button title="تعديل البيانات وإعادة إرفاق المستمسكات" onPress={() => setStatus(null)} />
+        ) : (
+          <>
+            {pendingSpecialtyChange && <Text style={styles.note}>طلب تحديث الاختصاصات بانتظار موافقة الإدارة. اختصاصاتك الحالية تبقى فعالة.</Text>}
+            {!pendingSpecialtyChange && <Button title="إضافة أو تعديل اختصاصاتي" onPress={() => { setSpecialtyOnlyMode(true); setStatus(null); }} />}
+            <Button title="تفعيل واجهة الفني والانتقال للرئيسية" onPress={async () => {
+              if (!user) return;
+              const { error } = await supabase.rpc("grant_provider_role_safe", { _role: "worker" });
+              if (error) {
+                Alert.alert("تعذر تفعيل دور الفني", "حسابك معتمد، لكن تعذر تفعيل الدور تلقائياً. تواصل مع الدعم.");
+                return;
+              }
+              await refresh();
+              await setActiveRole("worker");
+              safeNavigate("/home", "replace");
+            }} />
+            <Button title="تواصل مع الدعم" onPress={() => router.push("/support-chat")} />
+          </>
+        )}
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 48 }}>
+      <Text style={styles.title}>{specialtyOnlyMode ? "تحديث اختصاصات الفني" : "تسجيل الفني في ممنون"}</Text>
+      <Text style={styles.note}>{specialtyOnlyMode ? "حدد الاختصاصات التي تريد اعتمادها. اختصاصاتك الحالية تبقى فعالة حتى توافق الإدارة." : "أكمل اختصاصاتك وارفق المستمسكات الثلاثة. يبقى الحساب قيد المراجعة لحين موافقة الإدارة."}</Text>
+      {!!rejectionReason && <Text style={styles.rejection}>سبب الرفض السابق: {rejectionReason}</Text>}
+
+      <Text style={styles.label}>الاسم الكامل المطابق للبطاقة الوطنية *</Text>
+      <TextInput style={styles.input} value={legalName} onChangeText={setLegalName} placeholder="الاسم الثلاثي واللقب" placeholderTextColor="#94a3b8" />
+
+      <Text style={styles.label}>حدد مهنتك واختصاصك داخل ممنون * (تقدر تختار أكثر من مهنة)</Text>
+      {servicesLoading ? <Text style={styles.note}>جاري تحميل قائمة المهن...</Text> : null}
+      {!!servicesError && (
+        <TouchableOpacity onPress={() => {
+          setServicesError(null);
+          setServicesLoading(true);
+          supabase.rpc("get_worker_service_catalog").then(({ data, error }) => {
+            if (error) console.error("get_worker_service_catalog retry failed:", error);
+            const available = (data || []).filter((s: WorkerService) => s.slug !== "taxi");
+            setServices(available);
+            setServicesError(error
+              ? (/invalid api key/i.test(error.message || "")
+                  ? "مفتاح اتصال Supabase في نسخة التطبيق غير صالح أو قديم. حدّث إعداد EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY في بيئة Production ثم أنشئ نسخة APK جديدة."
+                  : `تعذر تحميل المهن: ${error.message}`)
+              : available.length ? null : "قائمة المهن فارغة حالياً.");
+            setServicesLoading(false);
+          });
+        }}>
+          <Text style={styles.rejection}>{servicesError} اضغط هنا لإعادة المحاولة.</Text>
+        </TouchableOpacity>
+      )}
+      <View style={styles.servicesGrid}>
+        {services.map((s) => (
+          <TouchableOpacity key={s.id} style={[styles.serviceChip, selected.includes(s.id) && styles.serviceChipActive]} onPress={() => toggleService(s.id)}>
+            <View style={styles.serviceArtworkFrame}><Image source={getServiceImage(s.slug)} style={styles.serviceArtwork} resizeMode="cover" /></View>
+            <Text style={[styles.serviceChipText, selected.includes(s.id) && styles.serviceChipTextActive]}>{s.name_ar}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <Text style={styles.label}>حدد مستواك المهني *</Text>
+      <View style={styles.levelRow}>
+        <TouchableOpacity style={[styles.levelChip, level === "fani" && styles.levelChipActive]} onPress={() => setLevel("fani")}>
+          <Text style={[styles.levelText, level === "fani" && styles.levelTextActive]}>فني</Text>
+        </TouchableOpacity>
+        {canOfferExpertLevel && <TouchableOpacity style={[styles.levelChip, level === "khabir" && styles.levelChipActive]} onPress={() => setLevel("khabir")}>
+          <Text style={[styles.levelText, level === "khabir" && styles.levelTextActive]}>خبير</Text>
+        </TouchableOpacity>}
+      </View>
+
+      <Text style={styles.label}>نبذة عن خبرتك (اختياري)</Text>
+      <TextInput style={[styles.input, { height: 80 }]} value={bio} onChangeText={setBio} placeholder="خبراتك ومهاراتك..." multiline placeholderTextColor="#94a3b8" />
+
+      <Text style={styles.label}>الصورة الشخصية للوجه *</Text>
+      <Text style={styles.note}>الصورة الشخصية إلزامية لجميع الفنيين. ارفع صورة حديثة وواضحة لوجهك أنت، بدون فلاتر أو أشخاص آخرين، حتى تتمكن الإدارة من مطابقتها مع صورة الهوية قبل تفعيل الحساب.</Text>
+      <TouchableOpacity style={styles.photoButton} onPress={() => choosePhoto("face")}>
+        {facePhoto ? <Image source={{ uri: facePhoto.uri }} style={styles.preview} /> : <Text style={styles.photoText}>اضغط لالتقاط أو اختيار صورتك الشخصية</Text>}
+      </TouchableOpacity>
+
+      <Text style={styles.label}>البطاقة الوطنية - الجهة الأمامية *</Text>
+      <TouchableOpacity style={styles.photoButton} onPress={() => choosePhoto("id-front")}>
+        {idFrontPhoto ? <Image source={{ uri: idFrontPhoto.uri }} style={styles.preview} /> : <Text style={styles.photoText}>اضغط لإرفاق الوجه الأمامي</Text>}
+      </TouchableOpacity>
+
+      <Text style={styles.label}>البطاقة الوطنية - الجهة الخلفية *</Text>
+      <TouchableOpacity style={styles.photoButton} onPress={() => choosePhoto("id-back")}>
+        {idBackPhoto ? <Image source={{ uri: idBackPhoto.uri }} style={styles.preview} /> : <Text style={styles.photoText}>اضغط لإرفاق الوجه الخلفي</Text>}
+      </TouchableOpacity>
+
+      <View style={{ height: 24 }} />
+      <Button title="إرسال طلب التسجيل للمراجعة" onPress={submit} loading={busy} />
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: palette.pageCanvas, paddingHorizontal: 20, paddingTop: 52 },
+  statusContainer: { flex: 1, justifyContent: "center", padding: 24, gap: 18, backgroundColor: palette.pageCanvas },
+  title: { fontSize: 27, fontWeight: "900", color: palette.ink, marginBottom: 16, textAlign: "right" },
+  note: { color: palette.muted, fontSize: 13, lineHeight: 22, textAlign: "right" },
+  rejection: { color: palette.danger, backgroundColor: palette.dangerSoft, padding: 13, borderRadius: radius.md, marginTop: 12, textAlign: "right", lineHeight: 22 },
+  statusText: { color: palette.ink, fontSize: 14, lineHeight: 26, textAlign: "right" },
+  label: { fontSize: 13, fontWeight: "900", color: palette.ink, marginBottom: 8, marginTop: 18, textAlign: "right" },
+  servicesGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  serviceChip: { width: "47%", minHeight: 145, alignItems: "center", justifyContent: "center", paddingHorizontal: 10, paddingVertical: 14, borderRadius: radius.lg, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line },
+  serviceArtworkFrame: { width: 80, height: 80, marginBottom: 8, overflow: "hidden" },
+  serviceArtwork: { width: "100%", height: "100%", transform: [{ scale: 1.18 }] },
+  serviceChipActive: { borderColor: palette.gold, backgroundColor: palette.brandSoft },
+  serviceChipText: { fontSize: 12, fontWeight: "800", color: palette.muted, textAlign: "center" },
+  serviceChipTextActive: { color: palette.brand },
+  levelRow: { flexDirection: "row", gap: 10 },
+  levelChip: { flex: 1, alignItems: "center", paddingVertical: 14, borderRadius: radius.md, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line },
+  levelChipActive: { borderColor: palette.gold, backgroundColor: palette.brandSoft },
+  levelText: { fontSize: 14, fontWeight: "800", color: palette.muted },
+  levelTextActive: { color: palette.brand },
+  input: { minHeight: 54, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, paddingHorizontal: 16, paddingVertical: 14, fontSize: 14, fontWeight: "600", color: palette.ink, backgroundColor: palette.surface, textAlign: "right" },
+  photoButton: { minHeight: 112, borderWidth: 1, borderStyle: "dashed", borderColor: palette.gold, borderRadius: radius.lg, backgroundColor: palette.surface, alignItems: "center", justifyContent: "center", padding: 12 },
+  photoText: { color: palette.brand, fontWeight: "900", textAlign: "center" },
+  preview: { width: 150, height: 110, borderRadius: radius.md, resizeMode: "cover" },
+});

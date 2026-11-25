@@ -1,0 +1,438 @@
+import { useCallback, useEffect, useState } from "react";
+import {
+  ActivityIndicator, Alert, Image, Linking, Modal, RefreshControl, ScrollView, StyleSheet,
+  Text, TextInput, TouchableOpacity, View,
+} from "react-native";
+import { Stack } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth-context";
+import { palette, radius, space } from "@/styles/theme";
+import { getAdminStaffRoles } from "@/lib/admin-access";
+import { showContactOptions } from "@/lib/contact-actions";
+
+type UserRow = {
+  id: string; full_name: string | null; phone: string | null; email: string | null;
+  created_at: string; avatar_url?: string | null;
+  blocked?: { reason?: string | null; expires_at?: string | null; blocked_at?: string | null } | null;
+};
+type Detail = {
+  profile: any; roles: { role: string; created_at: string }[]; block: any;
+  driverProfile: any; workerProfile: any; transactions: any[]; requests: any[]; ratings: any[]; verifications?: any[];
+  partnerBusinessProfiles?: any[]; partnerApplications?: any[]; workerServices?: string[]; availableServices?: any[];
+  ratings_error?: boolean;
+};
+const DURATIONS = [
+  ["1_hour", "ساعة واحدة"], ["1_day", "يوم واحد"], ["1_week", "أسبوع"],
+  ["1_month", "شهر"], ["permanent", "دائم"],
+] as const;
+
+export default function AdminUsersScreen() {
+  const { user, loading: authLoading } = useAuth();
+  const [canView, setCanView] = useState<boolean | null>(null);
+  const [canManage, setCanManage] = useState(false);
+  const [rows, setRows] = useState<UserRow[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editGovernorate, setEditGovernorate] = useState("");
+  const [editDriver, setEditDriver] = useState<any>({});
+  const [editWorker, setEditWorker] = useState<any>({});
+  const [editWorkerServices, setEditWorkerServices] = useState<string[]>([]);
+  const [editPartner, setEditPartner] = useState<any>({});
+  const [avatarBase64, setAvatarBase64] = useState<string | null>(null);
+  const [avatarMime, setAvatarMime] = useState<"image/jpeg" | "image/png" | "image/webp">("image/jpeg");
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [blockTarget, setBlockTarget] = useState<UserRow | null>(null);
+  const [blockReason, setBlockReason] = useState("");
+  const [duration, setDuration] = useState<(typeof DURATIONS)[number][0]>("permanent");
+  const [error, setError] = useState("");
+
+  const invoke = useCallback(async (body: Record<string, unknown>) => {
+    const { data, error: invokeError } = await supabase.functions.invoke("admin-users", { body });
+    if (invokeError) throw new Error(invokeError.message || "تعذر الاتصال بخدمة إدارة المستخدمين");
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }, []);
+
+  const load = useCallback(async () => {
+    if (!user?.id) return;
+    setError("");
+    try {
+      const roleNames = await getAdminStaffRoles(user.id);
+      if (!roleNames.some((role: string) => ["super_admin", "admin", "support", "moderator", "department_monitoring"].includes(role))) {
+        setCanView(false); setRows([]); return;
+      }
+      setCanManage(roleNames.includes("super_admin") || roleNames.includes("admin"));
+      setCanView(true);
+      const result = await invoke(query.trim().length >= 2
+        ? { action: "search", query: query.trim() }
+        : { action: "list", page, limit: 50 });
+      setRows(result.users ?? []);
+      setTotal(result.total ?? result.users?.length ?? 0);
+    } catch (e: any) {
+      setError(String(e?.message || "تعذر تحميل المستخدمين"));
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id, query, page, invoke]);
+
+  useEffect(() => {
+    if (!authLoading) {
+      if (!user) { setCanView(false); setLoading(false); }
+      else void load();
+    }
+  }, [authLoading, user, load]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
+
+  const showDetail = async (id: string) => {
+    setBusyId(id);
+    try {
+      const loaded = await invoke({ action: "detail", user_id: id });
+      setDetail(loaded);
+      setEditName(loaded.profile?.full_name ?? "");
+      setEditPhone(loaded.profile?.phone ?? "");
+      setEditEmail(loaded.profile?.email ?? "");
+      setEditGovernorate(loaded.profile?.governorate_key ?? "");
+      setEditDriver({ ...(loaded.driverProfile ?? {}) });
+      setEditWorker({ ...(loaded.workerProfile ?? {}) });
+      setEditWorkerServices(loaded.workerServices ?? []);
+      const business = loaded.partnerBusinessProfiles?.[0] ?? {};
+      const application = loaded.partnerApplications?.[0] ?? {};
+      setEditPartner({
+        business_profile_id: business.id ?? null,
+        application_id: application.id ?? null,
+        business_name: business.business_name ?? application.business_name ?? "",
+        phone: business.phone ?? application.phone ?? "",
+        email: business.email ?? application.email ?? "",
+        governorate_key: business.governorate_key ?? application.governorate_key ?? "",
+        city: business.city ?? application.city ?? "",
+        address: business.address ?? application.address ?? "",
+        description: business.description ?? application.description ?? "",
+      });
+      setAvatarBase64(null);
+      setAvatarPreview(loaded.profile?.avatar_url ?? null);
+    }
+    catch (e: any) { Alert.alert("تعذر تحميل التفاصيل", String(e?.message || "حاول مرة ثانية")); }
+    finally { setBusyId(null); }
+  };
+
+
+  const pickAdminAvatar = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) { Alert.alert("إذن الصور", "اسمح بالوصول للصور حتى تختار صورة المستخدم."); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1,1],
+      quality: 0.82, base64: true,
+    });
+    const asset = result.assets?.[0];
+    const base64 = asset?.base64;
+    if (result.canceled || !asset || !base64) return;
+    if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) { Alert.alert("حجم الصورة", "اختر صورة أقل من 5 ميغابايت."); return; }
+    setAvatarBase64(base64);
+    const mime = asset.mimeType || "image/jpeg";
+    setAvatarMime(mime === "image/png" || mime === "image/webp" ? mime : "image/jpeg");
+    setAvatarPreview(asset.uri);
+  };
+
+  const saveProfile = async () => {
+    if (!detail?.profile?.id || editName.trim().length < 2) { Alert.alert("تحقق من الاسم", "اكتب اسماً من حرفين على الأقل."); return; }
+    if (detail.profile?.email && !editEmail.trim()) { Alert.alert("البريد مطلوب", "لا يمكن حذف بريد تسجيل الدخول من هنا؛ اتركه كما هو أو أدخل بريداً صحيحاً."); return; }
+    if (editEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editEmail.trim())) { Alert.alert("تحقق من البريد", "اكتب بريداً إلكترونياً صحيحاً أو اترك الحقل كما هو."); return; }
+    if (detail.partnerBusinessProfiles?.length && detail.partnerApplications?.length &&
+        (!editPartner.business_name?.trim() || !editPartner.phone?.trim() || !editPartner.governorate_key?.trim() || !editPartner.city?.trim() || !editPartner.address?.trim())) {
+      Alert.alert("بيانات المنشأة ناقصة", "اسم المنشأة والهاتف والمحافظة والمدينة والعنوان حقول مطلوبة.");
+      return;
+    }
+    setBusyId(detail.profile.id);
+    try {
+      const profile: Record<string, unknown> = {
+        full_name: editName.trim(),
+        governorate_key: editGovernorate || null,
+        ...(editPhone.trim() !== String(detail.profile?.phone ?? "") ? { phone: editPhone.trim() } : {}),
+        ...(editEmail.trim() !== String(detail.profile?.email ?? "") ? { email: editEmail.trim() } : {}),
+        ...(avatarBase64 ? { avatar_base64: avatarBase64, avatar_mime: avatarMime } : {}),
+      };
+      const driver_profile = detail.driverProfile ? {
+        vehicle_make: editDriver.vehicle_make?.trim() || null,
+        vehicle_model: editDriver.vehicle_model?.trim() || null,
+        vehicle_year: editDriver.vehicle_year == null || editDriver.vehicle_year === "" ? null : Number(editDriver.vehicle_year),
+        vehicle_plate: editDriver.vehicle_plate?.trim() || null,
+        vehicle_color: editDriver.vehicle_color?.trim() || null,
+        vehicle_type: editDriver.vehicle_type?.trim() || null,
+        ...(editDriver.vehicle_category ? { vehicle_category: editDriver.vehicle_category } : {}),
+        ...(editDriver.service_radius_km != null && editDriver.service_radius_km !== "" ? { service_radius_km: Number(editDriver.service_radius_km) } : {}),
+        ...(typeof editDriver.available === "boolean" ? { available: editDriver.available } : {}),
+      } : undefined;
+      const worker_profile = detail.workerProfile ? {
+        ...(editWorker.bio !== undefined ? { bio: editWorker.bio?.trim() || null } : {}),
+        ...(editWorker.level ? { level: editWorker.level } : {}),
+        ...(editWorker.service_radius_km != null && editWorker.service_radius_km !== "" ? { service_radius_km: Number(editWorker.service_radius_km) } : {}),
+        ...(editWorker.team_size != null && editWorker.team_size !== "" ? { team_size: Number(editWorker.team_size) } : {}),
+        ...(typeof editWorker.available === "boolean" ? { available: editWorker.available } : {}),
+        service_ids: editWorkerServices,
+      } : undefined;
+      const business = detail.partnerBusinessProfiles?.[0] ?? {};
+      const application = detail.partnerApplications?.[0] ?? {};
+      const hasPartner = !!(editPartner.business_profile_id && editPartner.application_id);
+      const partnerChanges: Record<string, unknown> = {};
+      const partnerPairs: [string, unknown, unknown][] = [
+        ["business_name", editPartner.business_name?.trim() || "", business.business_name ?? application.business_name ?? ""],
+        ["phone", editPartner.phone?.trim() || null, business.phone ?? application.phone ?? null],
+        ["email", editPartner.email?.trim() || null, business.email ?? application.email ?? null],
+        ["governorate_key", editPartner.governorate_key?.trim() || null, business.governorate_key ?? application.governorate_key ?? null],
+        ["city", editPartner.city?.trim() || "", business.city ?? application.city ?? ""],
+        ["address", editPartner.address?.trim() || "", business.address ?? application.address ?? ""],
+        ["description", editPartner.description?.trim() || "", business.description ?? application.description ?? ""],
+      ];
+      for (const [key, value, original] of partnerPairs) if (value !== original) partnerChanges[key] = value;
+      const partner_profile = hasPartner ? {
+        business_profile_id: editPartner.business_profile_id,
+        application_id: editPartner.application_id,
+        ...partnerChanges,
+      } : undefined;
+      const result = await invoke({
+        action: "admin_update_account",
+        user_id: detail.profile.id,
+        profile,
+        ...(driver_profile ? { driver_profile } : {}),
+        ...(worker_profile ? { worker_profile } : {}),
+        ...(partner_profile ? { partner_profile } : {}),
+      });
+      setDetail((current) => current ? {
+        ...current,
+        profile: { ...current.profile, ...(result.profile ?? {}) },
+        driverProfile: { ...current.driverProfile, ...(result.driver_profile ?? {}) },
+        workerProfile: { ...current.workerProfile, ...(result.worker_profile ?? {}) },
+        workerServices: editWorkerServices,
+        partnerBusinessProfiles: current.partnerBusinessProfiles?.map((row, index) => index === 0 ? { ...row, ...(result.partner_profile ?? {}) } : row),
+        partnerApplications: current.partnerApplications?.map((row, index) => index === 0 ? { ...row, ...(result.partner_profile ?? {}) } : row),
+      } : current);
+      setRows((current) => current.map((row) => row.id === detail.profile.id ? { ...row, ...(result.profile ?? {}) } : row));
+      setEditPhone(String(result.profile?.phone ?? editPhone));
+      setAvatarBase64(null);
+      Alert.alert("تم الحفظ", "تم تحديث بيانات الحساب وملفات السائق أو الفني والمنشأة ضمن صلاحيات الإدارة.");
+    } catch (e:any) { Alert.alert("تعذر الحفظ", String(e?.message || "حاول مرة ثانية")); }
+    finally { setBusyId(null); }
+  };
+
+  const unblock = (row: UserRow) => {
+    Alert.alert("رفع الحظر", `تريد رفع الحظر عن ${row.full_name || row.phone || "هذا المستخدم"}؟`, [
+      { text: "رجوع", style: "cancel" },
+      { text: "رفع الحظر", onPress: async () => {
+        setBusyId(row.id);
+        try { await invoke({ action: "unblock", user_id: row.id }); await load(); }
+        catch (e: any) { Alert.alert("تعذر رفع الحظر", String(e?.message || "حاول مرة ثانية")); }
+        finally { setBusyId(null); }
+      } },
+    ]);
+  };
+
+  const confirmBlock = async () => {
+    if (!blockTarget) return;
+    setBusyId(blockTarget.id);
+    try {
+      await invoke({ action: "block", user_id: blockTarget.id, reason: blockReason.trim(), duration });
+      setBlockTarget(null); setBlockReason(""); await load();
+      Alert.alert("تم", "تم حظر المستخدم وتسجيل الإجراء في سجل الإدارة.");
+    } catch (e: any) { Alert.alert("تعذر الحظر", String(e?.message || "حاول مرة ثانية")); }
+    finally { setBusyId(null); }
+  };
+
+  if (authLoading || loading) return <View style={s.center}><ActivityIndicator size="large" color={palette.brand}/><Text style={s.muted}>جاري تحميل المستخدمين...</Text></View>;
+  if (canView === false) return <View style={s.center}><Text style={s.title}>غير مصرّح</Text><Text style={s.muted}>هذه الصفحة متاحة للمشرفين والدعم والمراقبين المخوّلين.</Text></View>;
+
+  return (
+    <View style={s.page}>
+      <Stack.Screen options={{ title: "إدارة المستخدمين" }} />
+      <ScrollView contentContainerStyle={s.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh}/>}>
+        <Text style={s.title}>إدارة المستخدمين</Text>
+        <Text style={s.muted}>إجمالي النتائج: {total.toLocaleString("ar-IQ")}</Text>
+        <View style={s.searchRow}>
+          <TextInput value={query} onChangeText={(v) => { setQuery(v); setPage(1); }} placeholder="بحث بالاسم أو الهاتف أو البريد" placeholderTextColor={palette.muted} style={[s.input,{flex:1}]} textAlign="right" returnKeyType="search" onSubmitEditing={() => void load()}/>
+          <TouchableOpacity style={s.primary} onPress={() => void load()}><Text style={s.buttonText}>بحث</Text></TouchableOpacity>
+        </View>
+        {!!error && <View style={s.error}><Text style={s.errorText}>{error}</Text></View>}
+        {rows.length === 0 ? <Text style={s.empty}>لا يوجد مستخدمون مطابقون</Text> : rows.map((row) => (
+          <View key={row.id} style={s.card}>
+            <Text style={s.name}>{row.full_name || "بدون اسم"}</Text>
+            <Text style={s.muted}>{row.phone || row.email || row.id}</Text>
+            <Text style={s.muted}>تاريخ التسجيل: {row.created_at ? new Date(row.created_at).toLocaleDateString("ar-IQ") : "—"}</Text>
+            {!!row.blocked && <Text style={s.blocked}>محظور · {row.blocked.reason || "بدون سبب"}{row.blocked.expires_at ? " · حتى " + new Date(row.blocked.expires_at).toLocaleDateString("ar-IQ") : " · حظر دائم"}</Text>}
+            <View style={s.actions}>
+              {!!row.phone && <TouchableOpacity style={s.secondary} onPress={() => showContactOptions(row.phone!)}><Text style={s.secondaryText}>اتصال / واتساب</Text></TouchableOpacity>}
+              <TouchableOpacity style={s.secondary} disabled={busyId===row.id} onPress={() => void showDetail(row.id)}><Text style={s.secondaryText}>{busyId===row.id ? "..." : "التفاصيل"}</Text></TouchableOpacity>
+              {canManage && (row.blocked
+                ? <TouchableOpacity style={s.success} disabled={busyId===row.id} onPress={() => unblock(row)}><Text style={s.buttonText}>رفع الحظر</Text></TouchableOpacity>
+                : <TouchableOpacity style={s.danger} disabled={busyId===row.id} onPress={() => {setBlockTarget(row);setBlockReason("");setDuration("permanent");}}><Text style={s.buttonText}>حظر</Text></TouchableOpacity>)}
+            </View>
+          </View>
+        ))}
+        {!query.trim() && total > 50 && <View style={s.actions}>
+          <TouchableOpacity disabled={page===1} style={[s.secondary,page===1&&s.disabled]} onPress={() => setPage(p=>Math.max(1,p-1))}><Text style={s.secondaryText}>السابق</Text></TouchableOpacity>
+          <Text style={s.muted}>صفحة {page}</Text>
+          <TouchableOpacity disabled={rows.length<50} style={[s.secondary,rows.length<50&&s.disabled]} onPress={() => setPage(p=>p+1)}><Text style={s.secondaryText}>التالي</Text></TouchableOpacity>
+        </View>}
+      </ScrollView>
+
+      <Modal visible={!!blockTarget} transparent animationType="fade" onRequestClose={() => setBlockTarget(null)}>
+        <View style={s.overlay}><View style={s.modalCard}>
+          <Text style={s.title}>حظر المستخدم</Text>
+          <Text style={s.muted}>{blockTarget?.full_name || blockTarget?.phone}</Text>
+          <TextInput value={blockReason} onChangeText={setBlockReason} placeholder="سبب الحظر (اختياري)" placeholderTextColor={palette.muted} multiline style={[s.input,{minHeight:76}]} textAlign="right"/>
+          <Text style={s.section}>مدة الحظر</Text>
+          <View style={s.durationWrap}>{DURATIONS.map(([key,label])=><TouchableOpacity key={key} onPress={()=>setDuration(key)} style={[s.duration,duration===key&&s.durationActive]}><Text style={[s.durationText,duration===key&&s.durationTextActive]}>{label}</Text></TouchableOpacity>)}</View>
+          <View style={s.actions}>
+            <TouchableOpacity style={s.secondary} onPress={()=>setBlockTarget(null)}><Text style={s.secondaryText}>إلغاء</Text></TouchableOpacity>
+            <TouchableOpacity style={s.danger} disabled={!!busyId} onPress={()=>void confirmBlock()}><Text style={s.buttonText}>تأكيد الحظر</Text></TouchableOpacity>
+          </View>
+        </View></View>
+      </Modal>
+
+      <Modal visible={!!detail} transparent animationType="slide" onRequestClose={() => setDetail(null)}>
+        <View style={s.overlay}><View style={[s.modalCard,{maxHeight:"92%"}]}>
+          <View style={s.actions}><Text style={s.title}>تفاصيل المستخدم</Text><TouchableOpacity onPress={()=>setDetail(null)}><Text style={s.secondaryText}>إغلاق</Text></TouchableOpacity></View>
+          <ScrollView>
+            {canManage && <><Text style={s.section}>تعديل بيانات المستخدم</Text>
+            {avatarPreview ? <Image source={{uri:avatarPreview}} style={s.avatarPreview}/> : null}
+            <TouchableOpacity style={s.secondary} onPress={()=>void pickAdminAvatar()}><Text style={s.secondaryText}>اختيار / تغيير الصورة</Text></TouchableOpacity>
+            <TextInput value={editName} onChangeText={setEditName} placeholder="اسم المستخدم" placeholderTextColor={palette.muted} style={s.input} textAlign="right" maxLength={100}/>
+            <TextInput value={editPhone} onChangeText={setEditPhone} placeholder="رقم الهاتف" placeholderTextColor={palette.muted} style={s.input} textAlign="right" keyboardType="phone-pad" maxLength={24}/>
+            <TextInput value={editEmail} onChangeText={setEditEmail} placeholder="البريد الإلكتروني" placeholderTextColor={palette.muted} style={s.input} textAlign="right" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} maxLength={254}/>
+            <Text style={s.muted}>المحافظة المسجلة</Text>
+            <View style={s.durationWrap}>
+              {[
+                ["baghdad","بغداد"],["basra","البصرة"],["nineveh","نينوى"],["erbil","أربيل"],["sulaymaniyah","السليمانية"],["duhok","دهوك"],["kirkuk","كركوك"],["najaf","النجف"],["karbala","كربلاء"],["babil","بابل"],["anbar","الأنبار"],["diyala","ديالى"],["saladin","صلاح الدين"],["wasit","واسط"],["dhiqar","ذي قار"],["maysan","ميسان"],["muthanna","المثنى"],["qadisiyah","القادسية"]
+              ].map(([key,label])=><TouchableOpacity key={key} onPress={()=>setEditGovernorate(key)} style={[s.duration,editGovernorate===key&&s.durationActive]}><Text style={[s.durationText,editGovernorate===key&&s.durationTextActive]}>{label}</Text></TouchableOpacity>)}
+              <TouchableOpacity onPress={()=>setEditGovernorate("")} style={[s.duration,!editGovernorate&&s.durationActive]}><Text style={[s.durationText,!editGovernorate&&s.durationTextActive]}>غير محددة</Text></TouchableOpacity>
+            </View>
+            {!!detail?.driverProfile && <>
+              <Text style={s.section}>بيانات المركبة</Text>
+              {[
+                ["vehicle_make","الشركة المصنعة"],["vehicle_model","طراز المركبة"],["vehicle_year","سنة الصنع"],
+                ["vehicle_plate","رقم اللوحة"],["vehicle_color","اللون"],["vehicle_type","نوع المركبة"],["service_radius_km","نطاق الخدمة كم"],
+              ].map(([key,label])=><TextInput key={key} value={String(editDriver[key] ?? "")} onChangeText={value=>setEditDriver((current:any)=>({...current,[key]:value}))} placeholder={label} placeholderTextColor={palette.muted} style={s.input} textAlign="right" keyboardType={key==="vehicle_year"||key==="service_radius_km"?"numeric":"default"}/>)}
+              <Text style={s.muted}>فئة المركبة</Text>
+              <View style={s.durationWrap}>{[["economy","اقتصادي"],["premium","متميز"],["luxury","فاخر"],["large","مركبة كبيرة"]].map(([value,label])=><TouchableOpacity key={value} onPress={()=>setEditDriver((current:any)=>({...current,vehicle_category:value}))} style={[s.duration,editDriver.vehicle_category===value&&s.durationActive]}><Text style={[s.durationText,editDriver.vehicle_category===value&&s.durationTextActive]}>{label}</Text></TouchableOpacity>)}</View>
+              <TouchableOpacity style={s.secondary} onPress={()=>setEditDriver((current:any)=>({...current,available:!current.available}))}><Text style={s.secondaryText}>حالة التوفر: {editDriver.available?"متاح":"غير متاح"} · اضغط للتبديل</Text></TouchableOpacity>
+            </>}
+            {!!detail?.workerProfile && <>
+              <Text style={s.section}>بيانات الفني</Text>
+              <TextInput value={String(editWorker.bio ?? "")} onChangeText={value=>setEditWorker((current:any)=>({...current,bio:value}))} placeholder="نبذة وخبرات الفني" placeholderTextColor={palette.muted} style={[s.input,{minHeight:80}]} textAlign="right" multiline/>
+              <Text style={s.muted}>مستوى الفني</Text>
+              <View style={s.durationWrap}>{[["fani","فني"],["khabir","خبير"]].map(([value,label])=><TouchableOpacity key={value} onPress={()=>setEditWorker((current:any)=>({...current,level:value}))} style={[s.duration,editWorker.level===value&&s.durationActive]}><Text style={[s.durationText,editWorker.level===value&&s.durationTextActive]}>{label}</Text></TouchableOpacity>)}</View>
+              <TextInput value={String(editWorker.service_radius_km ?? "")} onChangeText={value=>setEditWorker((current:any)=>({...current,service_radius_km:value}))} placeholder="نطاق الخدمة كم" placeholderTextColor={palette.muted} style={s.input} textAlign="right" keyboardType="numeric"/>
+              <TextInput value={String(editWorker.team_size ?? "")} onChangeText={value=>setEditWorker((current:any)=>({...current,team_size:value}))} placeholder="عدد أفراد الفريق" placeholderTextColor={palette.muted} style={s.input} textAlign="right" keyboardType="numeric"/>
+              <TouchableOpacity style={s.secondary} onPress={()=>setEditWorker((current:any)=>({...current,available:!current.available}))}><Text style={s.secondaryText}>حالة التوفر: {editWorker.available?"متاح":"غير متاح"} · اضغط للتبديل</Text></TouchableOpacity>
+              <Text style={s.muted}>اختصاصات الفني</Text>
+              {(detail.availableServices ?? []).map((service:any)=><TouchableOpacity key={service.id} style={s.secondary} onPress={()=>setEditWorkerServices(current=>current.includes(service.id)?current.filter(id=>id!==service.id):[...current,service.id])}><Text style={s.secondaryText}>{editWorkerServices.includes(service.id)?"✓ ":"＋ "}{service.name_ar}</Text></TouchableOpacity>)}
+            </>}
+            {!!(detail?.partnerBusinessProfiles?.length && detail?.partnerApplications?.length) && <>
+              <Text style={s.section}>بيانات المنشأة</Text>
+              <TextInput value={String(editPartner.business_name ?? "")} onChangeText={value=>setEditPartner((current:any)=>({...current,business_name:value}))} placeholder="اسم المنشأة" placeholderTextColor={palette.muted} style={s.input} textAlign="right"/>
+              <TextInput value={String(editPartner.phone ?? "")} onChangeText={value=>setEditPartner((current:any)=>({...current,phone:value}))} placeholder="هاتف المنشأة" placeholderTextColor={palette.muted} style={s.input} textAlign="right" keyboardType="phone-pad"/>
+              <TextInput value={String(editPartner.email ?? "")} onChangeText={value=>setEditPartner((current:any)=>({...current,email:value}))} placeholder="بريد المنشأة" placeholderTextColor={palette.muted} style={s.input} textAlign="right" keyboardType="email-address"/>
+              <TextInput value={String(editPartner.governorate_key ?? "")} onChangeText={value=>setEditPartner((current:any)=>({...current,governorate_key:value}))} placeholder="رمز المحافظة (مثلاً najaf)" placeholderTextColor={palette.muted} style={s.input} textAlign="right"/>
+              <TextInput value={String(editPartner.city ?? "")} onChangeText={value=>setEditPartner((current:any)=>({...current,city:value}))} placeholder="المدينة" placeholderTextColor={palette.muted} style={s.input} textAlign="right"/>
+              <TextInput value={String(editPartner.address ?? "")} onChangeText={value=>setEditPartner((current:any)=>({...current,address:value}))} placeholder="العنوان" placeholderTextColor={palette.muted} style={s.input} textAlign="right"/>
+              <TextInput value={String(editPartner.description ?? "")} onChangeText={value=>setEditPartner((current:any)=>({...current,description:value}))} placeholder="وصف المنشأة" placeholderTextColor={palette.muted} style={[s.input,{minHeight:80}]} textAlign="right" multiline/>
+            </>}
+            <TouchableOpacity style={s.primary} disabled={busyId===detail?.profile?.id} onPress={()=>void saveProfile()}><Text style={s.buttonText}>{busyId===detail?.profile?.id ? "جارٍ الحفظ..." : "حفظ التعديلات"}</Text></TouchableOpacity>
+            </>}
+            <Info label="الاسم" value={detail?.profile?.full_name}/>
+
+            <Info label="الهاتف" value={detail?.profile?.phone}/>
+            <Info label="البريد" value={detail?.profile?.email}/>
+            <Info label="تاريخ التسجيل" value={detail?.profile?.created_at ? new Date(detail.profile.created_at).toLocaleString("ar-IQ") : "—"}/>
+            <Text style={s.section}>الأدوار</Text>
+            <Text style={s.muted}>{detail?.roles?.map(r=>r.role).join("، ") || "لا توجد أدوار"}</Text>
+            {!!detail?.block && <Info label="الحظر" value={detail.block.reason || "بدون سبب"}/>}
+            {!!detail?.driverProfile && <><Text style={s.section}>ملف السائق</Text><Info label="المركبة" value={`${detail.driverProfile.vehicle_make || "—"} ${detail.driverProfile.vehicle_model || ""}`}/><Info label="متاح" value={detail.driverProfile.available ? "نعم" : "لا"}/></>}
+            {!!detail?.workerProfile && <><Text style={s.section}>ملف الفني</Text><Info label="متاح" value={detail.workerProfile.available ? "نعم" : "لا"}/></>}
+            <Text style={s.section}>المستمسكات والهوية ({detail?.verifications?.length ?? 0})</Text>
+            {(detail?.verifications ?? []).map((verification: any, index: number) => (
+              <View key={verification.provider_type || index} style={s.verificationCard}>
+                <Info label="نوع الحساب" value={verification.provider_type === "worker" ? "فني" : verification.provider_type === "large_driver" ? "سائق سيارة كبيرة" : "كابتن تكسي"}/>
+                <Info label="الاسم بالهوية" value={verification.legal_name}/>
+                <Info label="الهاتف" value={verification.phone}/>
+                <Info label="البريد" value={verification.email}/>
+                <Info label="نوع المستند" value={verification.document_type}/>
+                <Info label="رقم الهوية" value={verification.id_number}/>
+                <Info label="حالة التدقيق" value={verification.status}/>
+                {!!verification.rejection_reason && <Info label="سبب الرفض" value={verification.rejection_reason}/>}
+                <View style={s.actions}>
+                  {[
+                    ["صورة الوجه", verification.face_photo_url],
+                    ["الهوية الأمامية", verification.id_card_photo_url],
+                    ["الهوية الخلفية", verification.id_card_back_photo_url],
+                    ["مستند المركبة", verification.vehicle_document_url],
+                    ["فيديو المركبة", verification.vehicle_video_url],
+                  ].map(([label, url]: any) => <TouchableOpacity key={label} disabled={!url} style={[s.secondary, !url && s.disabled]} onPress={() => url && void Linking.openURL(url)}><Text style={s.secondaryText}>{url ? `عرض ${label}` : `${label} غير متوفر`}</Text></TouchableOpacity>)}
+                </View>
+              </View>
+            ))}
+            <Text style={s.section}>المعاملات ({detail?.transactions?.length ?? 0})</Text>
+            {(detail?.transactions ?? []).map(tx=><Info key={tx.id} label={tx.type || "معاملة"} value={`${Number(tx.amount||0).toLocaleString("ar-IQ")} د.ع · ${new Date(tx.created_at).toLocaleDateString("ar-IQ")}`}/>)}
+            <Text style={s.section}>الطلبات ({detail?.requests?.length ?? 0})</Text>
+            {(detail?.requests ?? []).map(req=><Info key={req.id} label={req.type || "طلب"} value={`${req.status} · ${new Date(req.created_at).toLocaleDateString("ar-IQ")}`}/>)}
+            <Text style={s.section}>التقييمات ({detail?.ratings?.length ?? 0})</Text>
+            {detail?.ratings_error ? <Text style={s.errorText}>تعذر تحميل التقييمات؛ بقية تفاصيل المستخدم متاحة.</Text> : null}
+            {(detail?.ratings ?? []).slice(0,20).map(r=><Info key={r.id} label={`${r.stars ?? "—"} نجوم`} value={r.comment || "بدون تعليق"}/>)}
+          </ScrollView>
+        </View></View>
+      </Modal>
+    </View>
+  );
+}
+
+function Info({label,value}:{label:string;value:any}) {
+  return <View style={s.info}><Text style={s.infoLabel}>{label}</Text><Text style={s.infoValue}>{value == null || value === "" ? "—" : String(value)}</Text></View>;
+}
+
+const s = StyleSheet.create({
+  page:{flex:1,backgroundColor: palette.pageCanvas}, content:{padding:space.lg,paddingBottom:48,gap:10},
+  center:{flex:1,justifyContent:"center",alignItems:"center",backgroundColor: palette.pageCanvas,padding:24,gap:10},
+  title:{fontSize:21,fontWeight:"900",color:palette.ink,textAlign:"right"},
+  section:{fontSize:14,fontWeight:"900",color:palette.ink,textAlign:"right",marginTop:12,marginBottom:6},
+  muted:{fontSize:11,color:palette.muted,textAlign:"right",lineHeight:19},
+  searchRow:{flexDirection:"row",gap:8,alignItems:"center"},
+  input:{backgroundColor:palette.surface,borderWidth:1,borderColor:palette.line,borderRadius:radius.md,padding:12,color:palette.ink,textAlign:"right"},
+  card:{backgroundColor:palette.surface,borderWidth:1,borderColor:palette.line,borderRadius:radius.lg,padding:14,gap:6},
+  avatarPreview:{width:76,height:76,borderRadius:38,alignSelf:"flex-end",backgroundColor:palette.pageCanvas},
+  verificationCard:{borderWidth:1,borderColor:palette.line,borderRadius:radius.md,padding:10,marginVertical:6,gap:5},
+  name:{fontSize:14,fontWeight:"900",color:palette.ink,textAlign:"right"},
+  actions:{flexDirection:"row",gap:8,alignItems:"center",justifyContent:"flex-end",flexWrap:"wrap",marginTop:8},
+  primary:{minHeight:40,backgroundColor:palette.brand,borderRadius:16,paddingHorizontal:16,paddingVertical:8,alignItems:"center",justifyContent:"center"},
+  danger:{minHeight:36,backgroundColor:palette.danger,borderRadius:16,paddingHorizontal:12,paddingVertical:6,alignItems:"center",justifyContent:"center"},
+  success:{minHeight:36,backgroundColor:"#15803d",borderRadius:16,paddingHorizontal:12,paddingVertical:6,alignItems:"center",justifyContent:"center"},
+  secondary:{backgroundColor:palette.brandSoft,borderRadius:radius.md,paddingHorizontal:13,paddingVertical:10},
+  secondaryText:{color:palette.brand,fontSize:11,fontWeight:"900"},
+  buttonText:{color:"#FFFFFF",fontSize:11,fontWeight:"900"},
+  blocked:{fontSize:11,color:palette.danger,textAlign:"right"},
+  empty:{color:palette.muted,textAlign:"center",padding:24},
+  error:{backgroundColor:palette.dangerSoft,borderRadius:radius.md,padding:12},
+  errorText:{color:palette.danger,textAlign:"right",fontWeight:"800"},
+  disabled:{opacity:0.45},
+  overlay:{flex:1,backgroundColor:"rgba(0,0,0,0.55)",justifyContent:"center",padding:18},
+  modalCard:{backgroundColor:palette.canvas,borderRadius:radius.xl,padding:18,gap:10},
+  durationWrap:{flexDirection:"row",flexWrap:"wrap",gap:7},
+  duration:{padding:10,borderRadius:radius.md,borderWidth:1,borderColor:palette.line,backgroundColor:palette.surface},
+  durationActive:{backgroundColor:palette.brand,borderColor:palette.brand},
+  durationText:{color:palette.ink,fontSize:11,fontWeight:"800"},
+  durationTextActive:{color:"#FFFFFF"},
+  info:{flexDirection:"row",justifyContent:"space-between",gap:12,paddingVertical:8,borderBottomWidth:1,borderBottomColor:palette.line},
+  infoLabel:{color:palette.muted,fontSize:11,fontWeight:"700"},
+  infoValue:{color:palette.ink,fontSize:11,fontWeight:"800",flexShrink:1,textAlign:"right"},
+});

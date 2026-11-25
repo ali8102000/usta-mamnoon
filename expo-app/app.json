@@ -1,0 +1,69 @@
+{
+  "expo": {
+    "name": "ممنون",
+    "slug": "kfw",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/mamnoon-logo.png",
+    "scheme": "mamnoon",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/mamnoon-logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#f7f8f5"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mamnoon.app",
+      "config": {},
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "نحتاج موقعك لعرض الخدمات القريبة وتتبع الرحلات",
+        "NSCameraUsageDescription": "نحتاج الكاميرا لالتقاط صور الملف الشخصي",
+        "NSPhotoLibraryUsageDescription": "نحتاج معرض الصور لاختيار صورة الملف الشخصي",
+        "UIBackgroundModes": [
+          "location"
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/mamnoon-logo.png",
+        "backgroundColor": "#f7f8f5"
+      },
+      "package": "com.mamnoon.app",
+      "config": {},
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "VIBRATE",
+        "INTERNET",
+        "android.permission.POST_NOTIFICATIONS"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/mamnoon-logo.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-notifications",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "نحتاج موقعك لعرض الخدمات القريبة وتتبع الرحلات",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a6c763c4-3a5c-4725-b370-81967e3c0aab"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
+  }
+}

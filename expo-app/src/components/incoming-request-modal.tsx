@@ -1,0 +1,495 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  AppState,
+  Image,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { router } from "expo-router";
+import * as Notifications from "expo-notifications";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth-context";
+import service_build from "../../assets/services/build.jpg";
+import service_plaster from "../../assets/services/plaster.jpg";
+import service_carpentry_form from "../../assets/services/carpentry_form.jpg";
+import service_flooring from "../../assets/services/flooring.jpg";
+import service_chef from "../../assets/services/chef.jpg";
+import service_plumbing from "../../assets/services/plumbing.jpg";
+import service_electric_setup from "../../assets/services/electric_setup.jpg";
+import service_electric_street from "../../assets/services/electric_street.jpg";
+import service_washer_repair from "../../assets/services/washer_repair.jpg";
+import service_stove_repair from "../../assets/services/stove_repair.jpg";
+import service_fridge_repair from "../../assets/services/fridge_repair.jpg";
+import service_ac_repair from "../../assets/services/ac_repair.jpg";
+import service_cleaning from "../../assets/services/cleaning.jpg";
+import service_wood_carpentry from "../../assets/services/wood_carpentry.jpg";
+import service_blacksmith from "../../assets/services/blacksmith.jpg";
+import service_general from "../../assets/services/general.jpg";
+import { palette, radius } from "@/styles/theme";
+import { getNotificationChannelId, loadNotificationPreferences } from "@/lib/notification-sound";
+
+type Offer = {
+  id: string;
+  request_id: string;
+  distance_km: number | null;
+  expires_at: string;
+  service_requests: {
+    id: string;
+    type: "taxi" | "service";
+    status: string;
+    vehicle_category: string | null;
+    vehicle_type: string | null;
+    pickup_text: string;
+    dest_text: string | null;
+    notes: string | null;
+    attachment_path: string | null;
+    work_description: string | null;
+    price_estimate: number | null;
+    customer_price: number | null;
+    pricing_mode: string | null;
+    work_hours: number | null;
+    workers_count: number | null;
+    service_urgency_enabled?: boolean;
+    large_vehicle_urgency_enabled?: boolean;
+    taxi_urgency_enabled?: boolean;
+    taxi_urgency_percent?: number;
+    service_id: string | null;
+    services: { name_ar: string; slug: string; icon: string } | null;
+  };
+};
+
+const SERVICE_IMAGES: Record<string, number> = {
+  build: service_build,
+  plaster: service_plaster,
+  carpentry_form: service_carpentry_form,
+  flooring: service_flooring,
+  chef: service_chef,
+  plumbing: service_plumbing,
+  electric_setup: service_electric_setup,
+  electric_street: service_electric_street,
+  washer_repair: service_washer_repair,
+  stove_repair: service_stove_repair,
+  fridge_repair: service_fridge_repair,
+  ac_repair: service_ac_repair,
+  cleaning: service_cleaning,
+  wood_carpentry: service_wood_carpentry,
+  blacksmith: service_blacksmith,
+  general: service_general,
+}
+
+function roundPriceToNearest250(value: number) {
+  return Math.round(value / 250) * 250;
+}
+
+export function IncomingRequestModal() {
+  const { user, activeRole } = useAuth();
+  // Only the currently selected provider role may receive provider offers.
+  // A linked provider role must stay dormant while the user is in customer mode.
+  const canReceive = activeRole === "driver" || activeRole === "large_driver" || activeRole === "worker";
+  const [offer, setOffer] = useState<Offer | null>(null);
+  const [busy, setBusy] = useState<"accept" | "reject" | null>(null);
+  const [visible, setVisible] = useState(false);
+  const [largeOfferPrice, setLargeOfferPrice] = useState("");
+  const [largeOfferMessage, setLargeOfferMessage] = useState("");
+  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
+  const [attachmentPath, setAttachmentPath] = useState<string | null>(null);
+  const loadSequence = useRef(0);
+  const currentOfferId = useRef<string | null>(null);
+  const lastNotifiedOfferId = useRef<string | null>(null);
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
+
+  const loadOffer = useCallback(async () => {
+    const sequence = ++loadSequence.current;
+    if (!user || !canReceive) {
+      setOffer(null);
+      setVisible(false);
+      setAttachmentPath(null);
+      setAttachmentUrl(null);
+      return;
+    }
+    const { data, error } = await (supabase as any)
+      .from("request_offers")
+      .select("id, request_id, distance_km, expires_at, service_requests!inner(id, type, status, vehicle_category, vehicle_type, pickup_text, dest_text, notes, attachment_path, work_description, price_estimate, customer_price, pricing_mode, work_hours, workers_count, service_urgency_enabled, large_vehicle_urgency_enabled, taxi_urgency_enabled, taxi_urgency_percent, service_id, services(name_ar, slug, icon))")
+      .eq("provider_id", user.id)
+      .eq("status", "pending")
+      .is("proposed_price", null)
+      .gt("expires_at", new Date().toISOString())
+      .order("sent_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (sequence !== loadSequence.current) return;
+    if (error) {
+      console.warn("[incoming-offer] Could not load targeted offer:", error.message);
+      return;
+    }
+
+    const isActive = data?.service_requests?.status === "pending" || data?.service_requests?.status === "searching";
+    if (!data || !isActive) {
+      setOffer(null);
+      setVisible(false);
+      setAttachmentPath(null);
+      setAttachmentUrl(null);
+      return;
+    }
+
+    const nextAttachmentPath = data.service_requests?.attachment_path ?? null;
+    if (!nextAttachmentPath) {
+      setAttachmentPath(null);
+      setAttachmentUrl(null);
+    } else if (nextAttachmentPath !== attachmentPath || !attachmentUrl) {
+      // Retry signing on later polls if a transient storage error occurred.
+      const { data: signed, error: signedError } = await supabase.storage
+        .from("request-attachments")
+        .createSignedUrl(nextAttachmentPath, 60 * 60);
+      if (sequence !== loadSequence.current) return;
+      setAttachmentPath(nextAttachmentPath);
+      if (signedError) {
+        console.warn("[incoming-offer] Could not sign request photo:", signedError.message);
+        setAttachmentUrl(null);
+      } else {
+        setAttachmentUrl(signed?.signedUrl ?? null);
+      }
+    }
+
+    if (sequence !== loadSequence.current) return;
+    if (currentOfferId.current !== data.id) {
+      currentOfferId.current = data.id;
+      setLargeOfferPrice("");
+      setLargeOfferMessage("");
+    }
+    setOffer(data as Offer);
+    setVisible(true);
+    if (lastNotifiedOfferId.current !== data.id) {
+      lastNotifiedOfferId.current = data.id;
+      void (async () => {
+        const preferences = await loadNotificationPreferences();
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "طلب جديد من ممنون",
+            body: data.service_requests?.type === "taxi" ? "وصلك طلب تكسي جديد. افتح التطبيق للتفاصيل." : `وصلك طلب ${data.service_requests?.services?.name_ar || "خدمة"} جديد. افتح التطبيق للتفاصيل.`,
+            sound: preferences.soundEnabled ? "default" : false,
+            vibrate: preferences.vibrationEnabled ? [0, 250, 180, 250, 180, 350] : [],
+            data: { request_id: data.request_id, type: "incoming_request" },
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+            seconds: 1,
+            channelId: getNotificationChannelId(preferences.soundEnabled, preferences.vibrationEnabled),
+          },
+        });
+      })().catch((error) => console.warn("[incoming-offer] Local notification failed:", error));
+    }
+  }, [user, canReceive, attachmentPath, attachmentUrl]);
+
+  useEffect(() => {
+    void loadOffer();
+    if (!user || !canReceive) return;
+    // The 3-second native refresh already keeps offers current. Avoid a
+    // Realtime channel here because this modal lives above every tab and can
+    // outlive role changes on Android.
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void loadOffer();
+    });
+    const timer = setInterval(() => void loadOffer(), 3000);
+    return () => {
+      clearInterval(timer);
+      appStateSubscription.remove();
+    };
+  }, [user, canReceive, loadOffer]);
+
+  useEffect(() => {
+    if (!offer?.expires_at) { setRemainingSeconds(0); return; }
+    const update = () => setRemainingSeconds(Math.max(0, Math.ceil((new Date(offer.expires_at).getTime() - Date.now()) / 1000)));
+    update();
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [offer?.id, offer?.expires_at]);
+
+  useEffect(() => {
+    if (!offer?.id || !offer.expires_at || !visible) return;
+    const secondsLeft = Math.ceil((Date.parse(offer.expires_at) - Date.now()) / 1000);
+    if (secondsLeft <= 10) return;
+
+    let cancelled = false;
+    let notificationId: string | null = null;
+    void (async () => {
+      const preferences = await loadNotificationPreferences();
+      const id = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "ممنون · تبقّت 10 ثوانٍ",
+          body: "أسرع بالرد على الطلب قبل انتهاء مهلة القبول.",
+          sound: preferences.soundEnabled ? "default" : false,
+          vibrate: preferences.vibrationEnabled ? [0, 250, 180, 250] : [],
+          data: { request_id: offer.request_id, type: "offer_expiring" },
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+          seconds: Math.max(1, secondsLeft - 10),
+          channelId: getNotificationChannelId(preferences.soundEnabled, preferences.vibrationEnabled),
+        },
+      });
+      if (cancelled) await Notifications.cancelScheduledNotificationAsync(id);
+      else notificationId = id;
+    })().catch((error) => console.warn("[incoming-offer] Expiry warning could not be scheduled:", error));
+
+    return () => {
+      cancelled = true;
+      if (notificationId) void Notifications.cancelScheduledNotificationAsync(notificationId);
+    };
+  }, [offer?.id, offer?.expires_at, offer?.request_id, visible]);
+
+  const request = offer?.service_requests;
+  const serviceSlug = request?.services?.slug ?? "";
+  const imageSource = useMemo(() => SERVICE_IMAGES[serviceSlug], [serviceSlug]);
+  const amount = request?.customer_price ?? request?.price_estimate;
+  const code = offer?.request_id.slice(-6).toUpperCase();
+  const isLargeVehicle = request?.type === "taxi" && request?.vehicle_category === "large";
+
+  async function sendLargeVehicleOffer() {
+    if (!offer || !isLargeVehicle || busy) return;
+    const enteredPrice = Number(largeOfferPrice.replace(/[^0-9]/g, ""));
+    const price = roundPriceToNearest250(enteredPrice);
+    if (!Number.isSafeInteger(enteredPrice) || enteredPrice <= 0 || price < 250 || price > 50000) {
+      Alert.alert("السعر غير صحيح", "اكتب سعراً أكبر من صفر، وسيُقرّب تلقائياً لأقرب 250 دينار ضمن حد 50000.");
+      return;
+    }
+    setBusy("accept");
+    try {
+      const { error } = await supabase.rpc("submit_large_vehicle_offer", {
+        _request_id: offer.request_id,
+        _price: price,
+        _message: largeOfferMessage.trim() || null,
+      });
+      if (error) throw error;
+      setVisible(false);
+      setOffer(null);
+      setLargeOfferPrice("");
+      setLargeOfferMessage("");
+      Alert.alert("تم إرسال عرض السعر", "وصل عرضك إلى الزبون، وسيختار العرض المناسب.");
+    } catch (error) {
+      Alert.alert("تعذر إرسال العرض", error instanceof Error ? error.message : "حاول مرة ثانية.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function respond(action: "accept" | "reject") {
+    if (!offer || busy) return;
+    setBusy(action);
+    try {
+      if (action === "accept") {
+        const { error } = await supabase.rpc("accept_service_request", {
+          _request_id: offer.request_id,
+        });
+        if (error) throw error;
+        setVisible(false);
+        setOffer(null);
+        router.push({ pathname: "/request/[id]", params: { id: offer.request_id } });
+      } else {
+        const { error } = await supabase.rpc("reject_request_offer", {
+          _offer_id: offer.id,
+        });
+        if (error) throw error;
+        setVisible(false);
+        setOffer(null);
+        await loadOffer();
+      }
+    } catch (error) {
+      Alert.alert(
+        "تعذّر تنفيذ الطلب",
+        error instanceof Error ? error.message : "انتهت صلاحية العرض أو لم يعد متاحاً.",
+      );
+      await loadOffer();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Modal
+      visible={visible && Boolean(offer && request)}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={() => setVisible(false)}
+    >
+      <View style={styles.backdrop}>
+        <View style={styles.card}>
+          <ScrollView style={styles.cardScroll} contentContainerStyle={styles.cardContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.topLine}>
+            <View style={styles.pulse} />
+            <Text style={styles.topText}>طلب جديد موجّه إلك</Text>
+            <Text style={styles.code}>#{code}</Text>
+          </View>
+
+          <View style={[styles.countdown, remainingSeconds <= 10 && remainingSeconds % 2 === 0 && styles.countdownUrgent]}>
+            <Text style={styles.countdownCaption}>الوقت المتبقي لقبول الطلب</Text>
+            <Text style={[styles.countdownValue, remainingSeconds <= 10 && remainingSeconds % 2 === 0 && styles.countdownValueUrgent]}>
+              {`${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`}
+            </Text>
+            <Text style={styles.countdownFoot}>{remainingSeconds > 0 ? "لا تفوّت الفرصة" : "انتهت مهلة هذا العرض"}</Text>
+          </View>
+
+          <View style={styles.serviceRow}>
+            {imageSource ? (
+              <Image source={imageSource} style={styles.serviceImage} resizeMode="cover" />
+            ) : (
+              <View style={styles.taxiImage}>
+                <Text style={styles.taxiEmoji}>{request?.type === "taxi" ? "🚕" : "🛠️"}</Text>
+              </View>
+            )}
+            <View style={styles.serviceInfo}>
+              <Text style={styles.serviceTitle}>
+                {request?.type === "taxi" ? "طلب سيارة" : request?.services?.name_ar ?? "خدمة منزلية"}
+              </Text>
+              <Text style={styles.distance}>
+                {offer?.distance_km != null ? `يبعد عنك ${Number(offer.distance_km).toFixed(1)} كم` : "طلب قريب منك"}
+              </Text>
+              {request?.type === "taxi" && <Text style={styles.distance}>نوع المركبة: {request.vehicle_category === "large" ? "سيارة كبيرة" : request.vehicle_category === "luxury" ? "فاخر" : request.vehicle_category === "premium" ? "متميز" : "اقتصادي"}</Text>}
+              {(request?.service_urgency_enabled || request?.large_vehicle_urgency_enabled || request?.taxi_urgency_enabled) && <Text style={{ color: "#D97706", fontSize: 12, fontWeight: "900", textAlign: "right", marginTop: 5 }}>⚡ طلب مستعجل — أولوية عاجلة</Text>}
+            </View>
+          </View>
+
+          <View style={styles.details}>
+            <Text style={styles.detailLabel}>موقع الزبون</Text>
+            <Text style={styles.detailValue}>{request?.pickup_text || "لم يحدد وصف الموقع"}</Text>
+            {request?.dest_text ? (
+              <>
+                <Text style={styles.detailLabel}>الوجهة</Text>
+                <Text style={styles.detailValue}>{request.dest_text}</Text>
+              </>
+            ) : null}
+            {attachmentUrl ? (
+              <View style={styles.attachmentWrap}>
+                <Text style={styles.attachmentTitle}>صورة الزبون المرفقة بالطلب</Text>
+                <Image
+                  source={{ uri: attachmentUrl }}
+                  style={styles.attachmentImage}
+                  resizeMode="contain"
+                  onError={() => console.warn("[incoming-offer] Request photo failed to render")}
+                />
+              </View>
+            ) : null}
+            {request?.work_description || request?.notes ? (
+              <>
+                <Text style={styles.detailLabel}>تفاصيل العمل</Text>
+                <Text style={styles.detailValue}>{request.work_description || request.notes}</Text>
+              </>
+            ) : null}
+            <Text style={styles.detailLabel}>عدد العاملين</Text>
+            <Text style={styles.detailValue}>{request?.workers_count ?? 1}</Text>
+            {request?.work_hours != null ? (
+              <>
+                <Text style={styles.detailLabel}>ساعات العمل المتوقعة</Text>
+                <Text style={styles.detailValue}>{request.work_hours} ساعة</Text>
+              </>
+            ) : null}
+          </View>
+
+          {isLargeVehicle ? (
+            <View style={{ marginTop: 12, padding: 12, borderRadius: 14, backgroundColor: palette.canvas, borderWidth: 1, borderColor: palette.gold }}>
+              <Text style={styles.detailLabel}>نوع المركبة</Text>
+              <Text style={styles.detailValue}>{request?.vehicle_type === "kia_passenger" ? "كيا ركاب" : request?.vehicle_type === "bus" ? "باص" : "كيا حمل"}</Text>
+              <Text style={styles.detailLabel}>ميزانية الزبون</Text>
+              <Text style={styles.detailValue}>{amount != null ? `${Number(amount).toLocaleString("en")} د.ع` : "بانتظار عروض الأسعار"}</Text>
+              <Text style={{ color: palette.muted, fontSize: 11, marginTop: 8 }}>السعر يتقرب تلقائياً لأقرب 250 دينار</Text>
+              <TextInput
+                value={largeOfferPrice}
+                onChangeText={(value) => setLargeOfferPrice(value.replace(/[^0-9]/g, ""))}
+                onEndEditing={() => {
+                  const entered = Number(largeOfferPrice.replace(/[^0-9]/g, ""));
+                  if (Number.isSafeInteger(entered) && entered > 0) setLargeOfferPrice(String(roundPriceToNearest250(entered)));
+                }}
+                placeholder="أدخل أجرتك بالدينار (250–50000)"
+                keyboardType="numeric"
+                maxLength={5}
+                style={{ borderWidth: 1, borderColor: palette.line, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: palette.ink, textAlign: "right", marginTop: 12 }}
+              />
+              <TextInput
+                value={largeOfferMessage}
+                onChangeText={setLargeOfferMessage}
+                placeholder="ملاحظة للزبون (اختياري)"
+                maxLength={500}
+                style={{ borderWidth: 1, borderColor: palette.line, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: palette.ink, textAlign: "right", marginTop: 10 }}
+              />
+              <TouchableOpacity style={[styles.action, styles.accept, { marginTop: 10 }]} onPress={() => void sendLargeVehicleOffer()} disabled={Boolean(busy) || remainingSeconds <= 0}>
+                {busy === "accept" ? <ActivityIndicator color="#fff" /> : <Text style={styles.acceptText}>إرسال عرض السعر</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.action, styles.reject, { marginTop: 8 }]} onPress={() => void respond("reject")} disabled={Boolean(busy)}>
+                <Text style={styles.rejectText}>تجاهل الطلب</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <View style={styles.priceRow}>
+                <Text style={styles.priceLabel}>الأجر المعروض</Text>
+                <Text style={styles.priceValue}>
+                  {amount != null ? `${Number(amount).toLocaleString("en")} د.ع${request?.pricing_mode === "hourly" ? " / ساعة" : ""}` : "قابل للتفاوض"}
+                </Text>
+              </View>
+              <Text style={styles.expiry}>العرض مؤقت؛ اقبله قبل انتهاء المهلة.</Text>
+              <View style={styles.actions}>
+                <TouchableOpacity style={[styles.action, styles.reject]} onPress={() => void respond("reject")} disabled={Boolean(busy)}>
+                  <Text style={styles.rejectText}>رفض</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.action, styles.accept]} onPress={() => void respond("accept")} disabled={Boolean(busy) || remainingSeconds <= 0}>
+                  {busy === "accept" ? <ActivityIndicator color="#fff" /> : <Text style={styles.acceptText}>قبول الطلب</Text>}
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+          {busy === "reject" ? <ActivityIndicator style={{ marginTop: 10 }} color="#64748b" /> : null}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: "rgba(12, 29, 23, 0.72)", justifyContent: "center", padding: 18 },
+  card: { backgroundColor: palette.surface, borderRadius: 28, borderWidth: 1, borderColor: palette.gold, maxHeight: "92%", overflow: "hidden" },
+  cardScroll: { flexGrow: 0 },
+  cardContent: { padding: 20 },
+  topLine: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 16 },
+  pulse: { width: 10, height: 10, borderRadius: 5, backgroundColor: palette.success },
+  topText: { flex: 1, color: palette.brand, fontSize: 14, fontWeight: "900" },
+  code: { color: palette.muted, fontSize: 11, fontWeight: "900" },
+  countdown: { alignItems: "center", justifyContent: "center", marginBottom: 16, paddingVertical: 12, borderRadius: 18, borderWidth: 1.5, borderColor: "#D6AE42", backgroundColor: "#171307", shadowColor: "#E2B94F", shadowOpacity: 0.48, shadowRadius: 14, shadowOffset: { width: 0, height: 0 }, elevation: 8 },
+  countdownUrgent: { borderColor: "#F97373", backgroundColor: "#260D0D", shadowColor: "#EF4444" },
+  countdownCaption: { color: "#E8D7A4", fontSize: 11, fontWeight: "900" },
+  countdownValue: { color: "#FFE08A", fontSize: 34, lineHeight: 42, fontWeight: "900", letterSpacing: 3, fontVariant: ["tabular-nums"], textShadowColor: "rgba(255,208,94,0.8)", textShadowRadius: 12 },
+  countdownValueUrgent: { color: "#FF9B9B", textShadowColor: "rgba(255,80,80,0.9)" },
+  countdownFoot: { color: "#BBA46A", fontSize: 10, fontWeight: "800" },
+  serviceRow: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 },
+  serviceImage: { width: 76, height: 76, borderRadius: radius.lg, backgroundColor: palette.surfaceSoft },
+  taxiImage: { width: 76, height: 76, borderRadius: radius.lg, backgroundColor: palette.brandSoft, alignItems: "center", justifyContent: "center" },
+  taxiEmoji: { fontSize: 32 },
+  serviceInfo: { flex: 1 },
+  serviceTitle: { color: palette.ink, fontSize: 19, fontWeight: "900" },
+  distance: { color: palette.muted, fontSize: 12, marginTop: 5 },
+  details: { backgroundColor: palette.canvas, borderRadius: radius.lg, padding: 14, borderWidth: 1, borderColor: palette.line },
+  attachmentWrap: { marginTop: 12, padding: 10, borderRadius: radius.md, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line, gap: 8 },
+  attachmentTitle: { color: palette.brand, fontSize: 12, fontWeight: "900", textAlign: "right" },
+  attachmentImage: { width: "100%", height: 190, borderRadius: radius.md, backgroundColor: palette.surfaceSoft },
+  detailLabel: { color: palette.muted, fontSize: 10, fontWeight: "900", marginTop: 5 },
+  detailValue: { color: palette.ink, fontSize: 13, fontWeight: "700", marginTop: 3, lineHeight: 20 },
+  priceRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 14 },
+  priceLabel: { color: palette.muted, fontSize: 12, fontWeight: "800" },
+  priceValue: { color: palette.brand, fontSize: 19, fontWeight: "900" },
+  expiry: { color: "#9A7130", fontSize: 11, marginTop: 10, textAlign: "center" },
+  actions: { flexDirection: "row", gap: 10, marginTop: 16 },
+  action: { flex: 1, borderRadius: radius.md, paddingVertical: 15, alignItems: "center", justifyContent: "center" },
+  reject: { backgroundColor: palette.surfaceSoft },
+  accept: { backgroundColor: palette.brand },
+  rejectText: { color: palette.ink, fontWeight: "900" },
+  acceptText: { color: palette.white, fontWeight: "900" },
+});

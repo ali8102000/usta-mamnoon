@@ -1,0 +1,1356 @@
+import { createFileRoute, Navigate, useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
+import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  Phone,
+  Loader2,
+  CheckCircle2,
+  Clock,
+  Star,
+  X,
+  Navigation,
+  MapPin,
+  MessageCircle,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
+import { toast } from "@/lib/toast";
+import { LiveTrackMap } from "@/components/live-track-map";
+import { useLiveTracking } from "@/lib/use-live-tracking";
+import { CancelReasonModal } from "@/components/cancel-reason-modal";
+import { QuickReplies } from "@/components/quick-replies";
+import { MamnoonChatThread } from "@/components/mamnoon-chat-thread";
+import {
+  cancelRequest,
+  providerCancelRequest,
+  retryDispatch,
+  retryFailedRequest,
+  startRide,
+  completeRide,
+} from "@/lib/dispatch.functions";
+import { getReputation, type ReputationData } from "@/lib/reputation.functions";
+import { ReputationBadge } from "@/components/reputation";
+import { isSoundEnabled, playMessageSound, setSoundEnabled } from "@/lib/click-sound";
+import { NavigationAppModal } from "@/components/navigation-app-modal";
+import { Button } from "@/components/ui/button";
+import { ContactOptions } from "@/components/contact-options";
+import { serviceIcon } from "@/lib/service-visuals";
+
+const VEHICLE_CAT_META: Record<string, { label: string; emoji: string; gradient: string }> = {
+  economy: { label: "ممنون اقتصادي", emoji: "🚗", gradient: "from-emerald-400 to-teal-500" },
+  premium: { label: "ممنون المتميز", emoji: "🚙", gradient: "from-sky-500 to-indigo-600" },
+  luxury: { label: "ممنون فاخر", emoji: "🏎️", gradient: "from-amber-400 to-orange-500" },
+};
+
+function normalizeCashDigits(value: string) {
+  return value
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+    .replace(/[^0-9]/g, "");
+}
+
+export const Route = createFileRoute("/request/$id")({
+  ssr: false,
+  head: () => ({
+    meta: [
+      { title: "تفاصيل الطلب | ممنون" },
+      { name: "description", content: "تابع حالة طلبك وموقع مزود الخدمة وتواصل معه في ممنون." },
+      { property: "og:title", content: "تفاصيل الطلب | ممنون" },
+      {
+        property: "og:description",
+        content: "تابع حالة طلبك وموقع مزود الخدمة وتواصل معه في ممنون.",
+      },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
+    ],
+  }),
+  component: RequestDetail,
+});
+
+function RequestDetail() {
+  const { id } = Route.useParams();
+  const navigate = useNavigate();
+  const { session, loading: authLoading } = useAuth();
+  const [req, setReq] = useState<any>(null);
+  const [other, setOther] = useState<any>(null);
+  const [otherAvatarFailed, setOtherAvatarFailed] = useState(false);
+  const [largeOffers, setLargeOffers] = useState<any[]>([]);
+  const [serviceProviders, setServiceProviders] = useState<any[]>([]);
+  const [acceptingLargeOffer, setAcceptingLargeOffer] = useState<string | null>(null);
+  const [retryingLargeOffers, setRetryingLargeOffers] = useState(false);
+  const [chat, setChat] = useState<any>(null);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [showChat, setShowChat] = useState(false);
+  const [soundEnabled, setSoundEnabledState] = useState(() => isSoundEnabled());
+  const [vehicleDetails, setVehicleDetails] = useState<any>(null);
+  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [myRating, setMyRating] = useState<any>(null);
+  const [showRating, setShowRating] = useState(false);
+  const [showCancel, setShowCancel] = useState(false);
+  const [showReportForm, setShowReportForm] = useState(false);
+  const [reportReason, setReportReason] = useState("مشكلة أثناء الرحلة أو الخدمة");
+  const [reportDetails, setReportDetails] = useState("");
+  const [reportBusy, setReportBusy] = useState(false);
+  const [cashSettlementOpen, setCashSettlementOpen] = useState(false);
+  const [cashReceivedInput, setCashReceivedInput] = useState("");
+  const [cashSettlementBusy, setCashSettlementBusy] = useState(false);
+  const [paymentBusy, setPaymentBusy] = useState(false);
+  const [paymentGatewayEnabled, setPaymentGatewayEnabled] = useState(false);
+  const [taxiUrgencyBusy, setTaxiUrgencyBusy] = useState(false);
+  const [dispatchClock, setDispatchClock] = useState(Date.now());
+  const [urgencyAllowed, setUrgencyAllowed] = useState(false);
+  const [urgencyAdminPercent, setUrgencyAdminPercent] = useState(0);
+  const [urgencyBusy, setUrgencyBusy] = useState(false);
+  const countdownAlertedRef = useRef<string | null>(null);
+  const lastAcceptedAlertRef = useRef<string | null>(null);
+  const [retryPriceIncrease, setRetryPriceIncrease] = useState("0");
+  const [retryingRequest, setRetryingRequest] = useState(false);
+  const [navModalOpen, setNavModalOpen] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
+  const [otherRep, setOtherRep] = useState<ReputationData | null>(null);
+  const weeklyRatingNoticeRef = useRef<string | null>(null);
+  const getRepFn = useServerFn(getReputation);
+  const cancelFn = useServerFn(cancelRequest);
+  const providerCancelFn = useServerFn(providerCancelRequest);
+  const retryFn = useServerFn(retryDispatch);
+  const runStartRide = useServerFn(startRide);
+  const runCompleteRide = useServerFn(completeRide);
+
+  const acceptedPeopleCount = serviceProviders.reduce((sum, member) => sum + Number(member.team_size || 1), 0);
+  const remainingPeopleCount = Math.max(0, Number(req?.workers_count || 1) - acceptedPeopleCount);
+  const myUserId = session?.user.id ?? null;
+  const sessionUser = session?.user;
+  const otherUserId = req
+    ? myUserId === req.customer_id
+      ? req.provider_id
+      : req.customer_id
+    : null;
+  const myRole: "customer" | "provider" =
+    req && myUserId === req.customer_id ? "customer" : "provider";
+  const isServiceTeamMember = serviceProviders.some((member) => member.provider_id === myUserId);
+  useEffect(() => { setOtherAvatarFailed(false); }, [other?.avatar_url]);
+  useEffect(() => {
+    const timer = setInterval(() => setDispatchClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    let active = true;
+    (supabase as any).from("taxi_pricing_controls").select("urgency_enabled,urgency_max_percent")
+      .eq("governorate_key","all").maybeSingle()
+      .then(({ data }: any) => {
+        if (!active) return;
+        setUrgencyAllowed(Boolean(data?.urgency_enabled) && Number(data?.urgency_max_percent) > 0);
+        setUrgencyAdminPercent(Number(data?.urgency_max_percent) || 0);
+      });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    if (!req || myRole !== "customer" || !["pending","searching"].includes(req.status)) return;
+    const start = Date.parse(req.searching_started_at || req.created_at || new Date().toISOString());
+    const totalSeconds = 360 * (req.type === "service" ? Math.max(1, Number(req.workers_count) || 1) : 1);
+    const remaining = Math.max(0, totalSeconds - Math.floor((dispatchClock - start) / 1000));
+    if (remaining <= 10 && remaining > 0 && countdownAlertedRef.current !== req.id && soundEnabled) {
+      countdownAlertedRef.current = req.id;
+      playMessageSound(true);
+    }
+  }, [req?.id, req?.status, req?.searching_started_at, req?.created_at, req?.type, req?.workers_count, dispatchClock, myRole, soundEnabled]);
+  useEffect(() => {
+    if (!req || myRole !== "customer" || req.status !== "accepted" || lastAcceptedAlertRef.current === req.id) return;
+    lastAcceptedAlertRef.current = req.id;
+    if (soundEnabled) playMessageSound(true);
+  }, [req?.id, req?.status, myRole, soundEnabled]);
+  const otherBadges = otherRep?.badges ?? [];
+  const trackingActive = !!req && (req.status === "accepted" || req.status === "in_progress");
+  useEffect(() => {
+    if (trackingActive) setMapOpen(true);
+  }, [req?.id, trackingActive]);
+  const { me: myLive, other: otherLive, routePoints: providerRoutePoints } = useLiveTracking({
+    requestId: req?.id ?? null,
+    myUserId,
+    otherUserId,
+    myRole,
+    active: trackingActive,
+  });
+  const driverLiveLocation = myRole === "provider" ? myLive : otherLive;
+  const driverLocationFresh = !!driverLiveLocation?.updatedAt &&
+    Date.now() - new Date(driverLiveLocation.updatedAt).getTime() < 20_000;
+
+  const loadAll = useCallback(async () => {
+    try {
+      const { data: r } = await supabase
+        .from("service_requests")
+        .select("*, services(name_ar,slug)")
+        .eq("id", id)
+        .maybeSingle();
+      if (!r) {
+        setLoading(false);
+        return;
+      }
+      setReq(r);
+      // Show the accepted request immediately; secondary details hydrate below.
+      setLoading(false);
+      if (r.type === "service") {
+        setServiceProviders([]);
+        const { data: acceptedProviders, error: acceptedProvidersError } = await (supabase as any)
+          .from("service_request_providers")
+          .select("provider_id,team_size,accepted_at")
+          .eq("request_id", id)
+          .order("accepted_at", { ascending: true });
+        if (!acceptedProvidersError) setServiceProviders(acceptedProviders ?? []);
+      } else {
+        setServiceProviders([]);
+      }
+      if (r.attachment_path) {
+        const { data: signedAttachment, error: attachmentError } = await supabase.storage
+          .from("request-attachments")
+          .createSignedUrl(r.attachment_path, 60 * 60);
+        if (attachmentError) {
+          console.warn("[request attachment] signed URL unavailable:", attachmentError.message);
+          setAttachmentUrl(null);
+        } else {
+          setAttachmentUrl(signedAttachment?.signedUrl ?? null);
+        }
+      } else {
+        setAttachmentUrl(null);
+      }
+      if (r.type === "taxi" && r.provider_id) {
+        const { data: vehicle } = await (supabase as any).from("provider_vehicle_public").select("vehicle_make, vehicle_model, vehicle_year, vehicle_color, vehicle_plate").eq("provider_id", r.provider_id).maybeSingle();
+        setVehicleDetails(vehicle ?? null);
+      } else {
+        setVehicleDetails(null);
+      }
+      const { data: gatewayStatus, error: gatewayStatusError } = await supabase.functions.invoke("zaincash-config-status", { body: {} });
+      setPaymentGatewayEnabled(!gatewayStatusError && gatewayStatus?.ready === true);
+      if (r.vehicle_category === "large" && sessionUser?.id === r.customer_id && ["pending", "searching"].includes(r.status)) {
+        const { data: bids } = await (supabase as any)
+          .from("request_offers")
+          .select("id, provider_id, proposed_price, offer_message, sent_at")
+          .eq("request_id", id)
+          .eq("status", "pending")
+          .gt("expires_at", new Date().toISOString())
+          .not("proposed_price", "is", null)
+          .order("sent_at", { ascending: false });
+        const providerIds: string[] = [...new Set<string>((bids ?? []).map((bid: any) => String(bid.provider_id)))];
+        const { data: profiles } = providerIds.length
+          ? await supabase.from("profiles").select("id, full_name, phone, avatar_url").in("id", providerIds)
+          : { data: [] };
+        const profileById = new Map((profiles ?? []).map((profile: any) => [profile.id, profile]));
+        setLargeOffers((bids ?? []).map((bid: any) => ({ ...bid, profile: profileById.get(bid.provider_id) ?? null })));
+      } else {
+        setLargeOffers([]);
+      }
+      const otherId = sessionUser?.id === r.customer_id ? r.provider_id : r.customer_id;
+      if (otherId && ["accepted", "in_progress", "completed"].includes(r.status)) {
+        const { data: p } = await supabase.from("profiles").select("id, full_name, phone, avatar_url").eq("id", otherId).maybeSingle();
+        setOther(p);
+        getRepFn({ data: { userId: otherId } }).then((rep) => setOtherRep(rep)).catch(() => {});
+      } else {
+        setOther(null);
+        setOtherRep(null);
+      }
+      if (["pending", "searching", "accepted", "in_progress"].includes(r.status)) {
+        const { data: c } = await supabase
+          .from("chats")
+          .select("*")
+          .eq("request_id", id)
+          .maybeSingle();
+        setChat(c);
+        if (c) {
+          const { data: m } = await supabase
+            .from("messages")
+            .select("*")
+            .eq("chat_id", c.id)
+            .order("created_at");
+          setMessages(m ?? []);
+        }
+      } else {
+        setChat(null);
+        setMessages([]);
+      }
+      if (sessionUser) {
+        const { data: rate } = await supabase
+          .from("ratings")
+          .select("*")
+          .eq("request_id", id)
+          .eq("rater_id", sessionUser.id)
+          .maybeSingle();
+        setMyRating(rate);
+        if (r.status === "completed" && !rate) {
+          const rateeId = r.customer_id === sessionUser.id ? r.provider_id : r.customer_id;
+          const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+          const { data: weeklyRating } = await (supabase as any).from("ratings").select("id").eq("rater_id", sessionUser.id).eq("ratee_id", rateeId).gte("created_at", weekAgo).limit(1).maybeSingle();
+          setShowRating(!weeklyRating);
+          if (weeklyRating && weeklyRatingNoticeRef.current !== rateeId) {
+            weeklyRatingNoticeRef.current = rateeId;
+            toast.error("لقد تم تقييم هذا الشخص من قبلك خلال آخر 7 أيام.");
+          }
+        } else {
+          setShowRating(false);
+          weeklyRatingNoticeRef.current = null;
+        }
+      }
+    } catch (e) {
+      console.error("[request] loadAll error:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [id, sessionUser, getRepFn]);
+
+  useEffect(() => {
+    if (session) void loadAll();
+  }, [session, loadAll]);
+
+  useEffect(() => { setShowChat(false); }, [id]);
+
+  useEffect(() => {
+    if (!chat) return;
+    const ch = supabase
+      .channel(`messages-${chat.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages", filter: `chat_id=eq.${chat.id}` },
+        (payload) => {
+          setMessages((m) => [...m, payload.new]);
+          const isIncoming = payload.new.sender_id !== session?.user?.id;
+          playMessageSound(isIncoming);
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [chat, session?.user?.id]);
+
+  const requestId = req?.id;
+  const requestStatus = req?.status;
+
+  useEffect(() => {
+    if (!requestId) return;
+    const ch = supabase
+      .channel(`req-${id}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "service_requests", filter: `id=eq.${id}` },
+        () => loadAll(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "request_offers", filter: `request_id=eq.${id}` },
+        () => loadAll(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "service_request_providers", filter: `request_id=eq.${id}` },
+        () => loadAll(),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [requestId, id, loadAll]);
+
+  useEffect(() => {
+    if (!requestId || myRole !== "customer" || req?.vehicle_category === "large") return;
+    if (!["pending", "searching"].includes(requestStatus as string)) return;
+    const t = setInterval(() => {
+      retryFn({ data: { requestId } }).catch(() => {});
+      loadAll();
+    }, 5000);
+    return () => clearInterval(t);
+  }, [requestId, requestStatus, myRole, loadAll, retryFn, req?.vehicle_category]);
+
+  if (authLoading || loading)
+    return (
+      <div className="min-h-screen grid place-items-center">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+    );
+  if (!session) return <Navigate to="/auth" />;
+  if (!req) return <div className="p-8 text-center">الطلب غير موجود</div>;
+
+  async function send() {
+    if (!draft.trim() || !chat || !session) return;
+    const text = draft.trim();
+    setDraft("");
+    playMessageSound(false);
+    const { error } = await supabase.from("messages").insert({
+      chat_id: chat.id,
+      sender_id: session.user.id,
+      content: text,
+    });
+    if (error) toast.error(error.message);
+  }
+
+  async function retryLargeOffers() {
+    setRetryingLargeOffers(true);
+    try {
+      const { data, error } = await (supabase as any).rpc("retry_large_vehicle_dispatch", { _request_id: id });
+      if (error) throw error;
+      toast(Number(data) > 0 ? "تم إرسال الطلب لأصحاب السيارات المتاحين" : "ماكو سيارة متاحة حالياً، طلبك يبقى محفوظ");
+      await loadAll();
+    } catch (error: any) {
+      toast.error(error?.message ?? "تعذر إعادة إرسال الطلب");
+    } finally {
+      setRetryingLargeOffers(false);
+    }
+  }
+
+  async function acceptLargeOffer(offerId: string) {
+    setAcceptingLargeOffer(offerId);
+    try {
+      const { error } = await (supabase as any).rpc("accept_large_vehicle_offer", { _offer_id: offerId });
+      if (error) throw error;
+      toast.success("تم قبول عرض السعر وإنشاء المحادثة");
+      await loadAll();
+    } catch (error: any) {
+      toast.error(error?.message ?? "تعذر قبول العرض");
+    } finally {
+      setAcceptingLargeOffer(null);
+    }
+  }
+
+  async function rejectLargeOffer(offerId: string) {
+    setAcceptingLargeOffer(offerId);
+    try {
+      const { error } = await (supabase as any).rpc("reject_large_vehicle_offer", { _offer_id: offerId });
+      if (error) throw error;
+      toast("تم رفض العرض");
+      await loadAll();
+    } catch (error: any) {
+      toast.error(error?.message ?? "تعذر رفض العرض");
+    } finally {
+      setAcceptingLargeOffer(null);
+    }
+  }
+
+  async function payRequestWithZainCash() {
+    if (!session || myRole !== "customer" || paymentBusy || req.payment_method === "zaincash") return;
+    setPaymentBusy(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("zaincash-create-payment", {
+        body: { purpose: "service_request", requestId: req.id },
+      });
+      if (error) throw error;
+      if (typeof data?.redirectUrl !== "string" || !data.redirectUrl.startsWith("https://")) {
+        throw new Error("لم يصل رابط الدفع الآمن من الخادم");
+      }
+      window.location.assign(data.redirectUrl);
+    } catch (error: any) {
+      toast.error(error?.message || "تعذر بدء الدفع عبر زين كاش");
+    } finally {
+      setPaymentBusy(false);
+    }
+  }
+
+  function markCompleted() {
+    if (!req || myRole !== "provider" || req.status !== "in_progress") return;
+    const fare = Number(req.customer_payable ?? req.customer_price ?? req.price_estimate ?? 0);
+    setCashReceivedInput(req.payment_method === "zaincash" ? "0" : String(Math.max(0, Math.round(fare))));
+    setCashSettlementOpen(true);
+  }
+
+  async function submitCashSettlement() {
+    if (!req || cashSettlementBusy) return;
+    const digits = normalizeCashDigits(cashReceivedInput);
+    const amount = digits === "" ? NaN : Number(digits);
+    if (!Number.isSafeInteger(amount) || amount < 0 || amount > 100000000) {
+      toast.error("اكتب المبلغ النقدي المستلم بشكل صحيح");
+      return;
+    }
+    if (req.payment_method === "zaincash" && amount !== 0) {
+      toast.error("هذا الطلب مدفوع إلكترونياً؛ لا تدخل مبلغاً نقدياً");
+      return;
+    }
+    setCashSettlementBusy(true);
+    try {
+      const result = await runCompleteRide({ data: { requestId: id, cashReceivedIqd: amount } });
+      setCashSettlementOpen(false);
+      toast.success(result.changeIqd > 0
+        ? `تم إنهاء الطلب وإضافة ${result.changeIqd.toLocaleString("ar-IQ")} د.ع إلى محفظة الزبون`
+        : "تم إنهاء الطلب بنجاح");
+      await loadAll();
+    } catch (e: any) {
+      const raw = String(e?.message ?? "");
+      const message = raw.includes("provider_wallet_debt_limit_exceeded")
+        ? "رصيد محفظتك وصل حد المديونية. رجّع الباقي نقداً للزبون، ثم سجّل الأجرة التي احتفظت بها."
+        : raw.includes("cash_received_less_than_fare")
+          ? "المبلغ المستلم أقل من أجرة الطلب. تأكد من استلام الأجرة كاملة قبل الإكمال."
+          : raw || "تعذّر إنهاء الطلب وتسوية الباقي";
+      toast.error(message);
+    } finally {
+      setCashSettlementBusy(false);
+    }
+  }
+
+  async function retryFailedDispatch() {
+    if (!req || retryingRequest) return;
+    const increase = Number(retryPriceIncrease.replace(/[^0-9]/g, ""));
+    if (!Number.isSafeInteger(increase) || increase < 0 || increase > 50000 || increase % 250 !== 0) {
+      toast.error("زيادة السعر لازم تكون من مضاعفات 250 دينار وبحد أقصى 50 ألف");
+      return;
+    }
+    const activeSearch = req && ["pending", "searching"].includes(req.status);
+    if (activeSearch && increase <= 0) {
+      toast.error("اكتب مقدار الزيادة أولاً حتى نعيد إرسال الطلب بالسعر الجديد");
+      return;
+    }
+    setRetryingRequest(true);
+    try {
+      if (activeSearch) {
+        const { error } = await (supabase as any).rpc("raise_request_price", { _request_id: id, _price_increase: increase });
+        if (error) throw error;
+      } else {
+        await retryFailedRequest({ data: { requestId: id, priceIncrease: increase } });
+      }
+      toast.success(activeSearch ? "تم رفع السعر وإعادة إرسال الطلب للمزودين" : increase > 0 ? "تمت إعادة الطلب مع رفع السعر" : "تمت إعادة إرسال نفس الطلب");
+      setRetryPriceIncrease("0");
+      await loadAll();
+    } catch (error: any) {
+      toast.error(error?.message ?? "تعذّرت إعادة المحاولة");
+    } finally {
+      setRetryingRequest(false);
+    }
+  }
+
+  async function applyRequestUrgency(multiplier: 2 | 3) {
+    if (!req || myRole !== "customer" || urgencyBusy) return;
+    setUrgencyBusy(true);
+    try {
+      const { data, error } = await (supabase as any).rpc("apply_request_urgency", { _request_id: id, _multiplier: multiplier });
+      if (error) throw error;
+      const result = Array.isArray(data) ? data[0] : data;
+      toast.success(`تم تفعيل الاستعجال ×${multiplier} وزيادة الأجر بنسبة ${Number(result?.urgency_percent ?? urgencyAdminPercent * multiplier)}٪`);
+      await loadAll();
+    } catch (error: any) {
+      toast.error(error?.message ?? "تعذر تفعيل وضع الاستعجال");
+    } finally {
+      setUrgencyBusy(false);
+    }
+  }
+
+  async function enableTaxiUrgency() {
+    if (!req || taxiUrgencyBusy) return;
+    setTaxiUrgencyBusy(true);
+    try {
+      const { error } = await (supabase as any).rpc("enable_taxi_request_urgency", { _request_id: id });
+      if (error) throw error;
+      toast.success("تم تفعيل الاستعجال وتحديث الأجرة وإعادة إرسال الطلب للسائقين");
+      await loadAll();
+    } catch (error: any) {
+      toast.error(error?.message?.includes("taxi_urgency_not_available") ? "وضع الاستعجال غير متاح حالياً حسب إعدادات ممنون" : error?.message ?? "تعذّر تفعيل الاستعجال");
+    } finally {
+      setTaxiUrgencyBusy(false);
+    }
+  }
+
+  async function submitUserReport() {
+    if (!session?.user.id || !otherUserId) { toast.error("ما نكدر نحدد الطرف المراد الإبلاغ عنه"); return; }
+    if (!["in_progress", "completed"].includes(req?.status)) { toast.error("البلاغات متاحة بعد بدء الرحلة أو الخدمة فعلياً فقط"); return; }
+    if (!reportReason.trim()) { toast.error("اختر تصنيف البلاغ"); return; }
+    if (reportDetails.trim().length < 10) { toast.error("اشرح المشكلة بتفاصيل لا تقل عن 10 أحرف حتى تتمكن الإدارة من مراجعتها"); return; }
+    setReportBusy(true);
+    try {
+      const { error } = await (supabase as any).from("user_reports").insert({ reporter_id: session.user.id, reported_id: otherUserId, request_id: id, reason: reportReason.trim(), details: reportDetails.trim(), status: "pending" });
+      if (error) throw error;
+      toast.success(`وصل البلاغ إلى إدارة ممنون وربطناه بالرحلة ${req.request_code || String(req.id).slice(0, 8).toUpperCase()}`);
+      setShowReportForm(false); setReportDetails("");
+    } catch (error: any) { toast.error(error?.message ?? "تعذر إرسال البلاغ"); }
+    finally { setReportBusy(false); }
+  }
+
+  const statusLabel =
+    req.type === "service" && req.status === "accepted" && remainingPeopleCount > 0
+      ? "اكتفى الزبون بالعدد المتوفر"
+      : ({
+          pending: "بانتظار القبول",
+          searching: "جاري البحث",
+          accepted: "تم القبول",
+          in_progress: "قيد التنفيذ",
+          completed: "مكتمل",
+          cancelled: "ملغي",
+        }[req.status as string] ?? req.status);
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <div className="glass-strong px-5 pt-10 pb-4 sticky top-0 z-30">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-lg font-black">
+              {req.vehicle_category === "large" ? "طلب سيارة كبيرة" : req.type === "taxi" ? "رحلة تكسي" : "خدمة فنية"}
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1">
+              {req.status === "pending" ? (
+                <Clock className="h-3.5 w-3.5" />
+              ) : (
+                <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+              )}
+              {statusLabel}
+              <span className="mr-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-black text-primary" dir="ltr">رقم الطلب: {req.request_code || String(req.id).slice(0, 8).toUpperCase()}</span>
+              {req.type === "taxi" && myRole === "customer" && req.status === "accepted" && (
+                <span className="mr-2 inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] font-black text-emerald-700 dark:text-emerald-300">الكابتن متجه إليك</span>
+              )}
+            </div>
+          </div>
+          {other && (
+            <ContactOptions phone={other.phone} className="glass h-11 w-11 rounded-2xl grid place-items-center btn-press text-primary" label="" />
+          )}
+        </div>
+      </div>
+
+      <div className="px-5 py-4 space-y-3">
+        {myRole === "customer" && ["accepted","in_progress","completed"].includes(req.status) && req.payment_method !== "zaincash" && Number(req.customer_payable ?? req.customer_price ?? req.price_estimate) > 0 && (
+          <div className="glass rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+            <div className="min-w-0"><div className="text-xs font-black">الدفع الإلكتروني · زين كاش</div><div className="text-[10px] text-muted-foreground">{paymentGatewayEnabled ? "الدفع متاح" : "غير متاح حالياً"}</div></div>
+            <Button type="button" size="sm" onClick={() => void payRequestWithZainCash()} disabled={paymentBusy || !paymentGatewayEnabled} className="h-9 shrink-0">
+              {paymentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "ادفع الآن"}
+            </Button>
+          </div>
+        )}
+        {req.type === "taxi" && req.vehicle_category && VEHICLE_CAT_META[req.vehicle_category] && (
+          <div className="glass rounded-xl px-3 py-2 flex items-center gap-2.5">
+            <div className="text-xl">{VEHICLE_CAT_META[req.vehicle_category].emoji}</div>
+            <div className="flex-1 min-w-0"><div className="text-[10px] text-muted-foreground">فئة السيارة</div><div className="text-xs font-black">{VEHICLE_CAT_META[req.vehicle_category].label}</div>
+              {vehicleDetails && <div className="text-[10px] text-muted-foreground truncate">السيارة: {[vehicleDetails.vehicle_make, vehicleDetails.vehicle_model, vehicleDetails.vehicle_year].filter(Boolean).join(" ")}{vehicleDetails.vehicle_color ? ` · ${vehicleDetails.vehicle_color}` : ""}{vehicleDetails.vehicle_plate ? ` · رقم اللوحة ${vehicleDetails.vehicle_plate}` : ""}</div>}
+            </div>
+            {req.price_estimate && <div className="text-left shrink-0"><div className="font-black text-xs">{Number(myRole === "customer" && (req as any).customer_payable != null ? (req as any).customer_payable : req.price_estimate).toLocaleString("ar-IQ")}</div><div className="text-[9px] text-muted-foreground">د.ع</div></div>}
+          </div>
+        )}
+
+        {req.vehicle_category === "large" && (
+          <div className="glass rounded-2xl p-3 space-y-1">
+            <div className="font-black text-sm">🚚 {req.vehicle_type === "kia_passenger" ? "كيا ركاب" : req.vehicle_type === "bus" ? "باص" : "كيا حمل"}</div>
+            <div className="text-xs text-muted-foreground">التسعير بالاتفاق بين الزبون وصاحب السيارة، وليس بالكيلومتر</div>
+            {(req.customer_price ?? req.price_estimate) != null && (
+              <div className="font-black text-primary">{Number(myRole === "customer" && (req as any).customer_payable != null ? (req as any).customer_payable : req.customer_price ?? req.price_estimate).toLocaleString("ar-IQ")} د.ع</div>
+            )}
+          </div>
+        )}
+
+        {myRole === "provider" && isServiceTeamMember && req.type === "service" && req.status === "searching" && (
+          <div className="mt-3 rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-3 text-right">
+            <div className="text-sm font-black text-emerald-700 dark:text-emerald-300">تم تسجيلك ضمن فريق الطلب</div>
+            <div className="mt-1 text-xs text-muted-foreground">الفريق المؤكد: {acceptedPeopleCount} من {req.workers_count ?? 1} · المتبقي: {remainingPeopleCount}</div>
+          </div>
+        )}
+        {req.type === "service" && (
+          <div className="glass rounded-2xl p-3 flex items-center gap-3" dir="rtl">
+            <img src={serviceIcon(req.services?.slug ?? "")} alt={req.services?.name_ar ?? "الخدمة"} className="h-16 w-16 rounded-xl object-cover border border-border" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] text-muted-foreground">الخدمة المطلوبة</div>
+              <div className="font-black text-base">{req.services?.name_ar ?? "خدمة منزلية"}</div>
+              <div className="text-[11px] text-muted-foreground">{req.level_required === "khabir" ? "خبير" : "فني"} · العدد المطلوب {req.workers_count ?? 1}</div>
+              <div className="mt-1 text-[11px] font-bold text-primary">تم تأكيد {acceptedPeopleCount} · المتبقي {remainingPeopleCount}</div>
+            </div>
+          </div>
+        )}
+        {req.type === "service" && ((req as any).pricing_mode || (req as any).work_description) && (
+          <div className="glass rounded-2xl p-3 space-y-1">
+            <div className="text-[11px] text-muted-foreground">السعر والشغل</div>
+            {(req as any).work_description && (
+              <div className="text-sm font-bold">🛠️ {(req as any).work_description}</div>
+            )}
+            <div className="font-black text-primary">
+              {(req as any).pricing_mode === "negotiable"
+                ? "💰 السعر يتفق عليه الطرفين"
+                : `💰 ${Number(myRole === "customer" && (req as any).customer_payable != null ? (req as any).customer_payable : (req as any).customer_price ?? 0).toLocaleString("ar-IQ")} د.ع${(req as any).pricing_mode === "hourly" && (req as any).work_hours ? ` · ${(req as any).work_hours} ساعة` : " · إنجاز تام"}`}
+            </div>
+          </div>
+        )}
+
+        {attachmentUrl && (
+          <div className="glass rounded-2xl p-3 space-y-2" dir="rtl">
+            <div className="text-sm font-black">الصورة المرفقة بالطلب</div>
+            <a href={attachmentUrl} target="_blank" rel="noreferrer" className="block">
+              <img src={attachmentUrl} alt="صورة توضيحية للطلب" className="mx-auto h-[340px] max-h-[42vh] w-full rounded-xl object-contain bg-background border border-border" loading="lazy" />
+            </a>
+          </div>
+        )}
+
+        {Number((req as any).coupon_discount ?? 0) > 0 && (
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-50/70 p-3 space-y-1">
+            <div className="font-black text-sm text-emerald-700">🎁 خصم كوبون ممنون</div>
+            <div className="text-sm">قيمة الخصم: <b>{Number((req as any).coupon_discount).toLocaleString("ar-IQ")} د.ع</b></div>
+            <div className="text-sm">المبلغ المطلوب من الزبون: <b>{Number((req as any).customer_payable ?? 0).toLocaleString("ar-IQ")} د.ع</b></div>
+            <div className="text-[11px] text-muted-foreground">{myRole === "customer" ? "خصمك مسجل على الطلب." : "استلم من الزبون المبلغ بعد الخصم فقط. فرق الخصم مسجل على المنصة كمبلغ مستحق لمقدم الخدمة."}</div>
+          </div>
+        )}
+
+        {req.vehicle_category === "large" && myRole === "customer" && ["pending", "searching"].includes(req.status) && (
+          <div className="glass rounded-2xl p-4 space-y-3">
+            <div className="font-black text-base">عروض أصحاب السيارات</div>
+            {largeOffers.length === 0 ? (
+              <p className="text-sm text-muted-foreground">بانتظار أصحاب السيارات يرسلون أسعارهم...</p>
+            ) : largeOffers.map((offer) => (
+              <div key={offer.id} className="rounded-xl border border-orange-200 bg-orange-50/70 p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="h-10 w-10 rounded-full bg-orange-100 grid place-items-center font-black text-orange-700">
+                    {(offer.profile?.full_name || "س")[0]}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-sm">{offer.profile?.full_name || "صاحب سيارة"}</div>
+                    <div className="text-xs text-muted-foreground">{req.vehicle_type === "kia_passenger" ? "كيا ركاب" : "كيا حمل"}</div>
+                  </div>
+                  <div className="font-black text-primary">{Number(offer.proposed_price).toLocaleString()} د.ع</div>
+                </div>
+                {offer.offer_message && <p className="text-xs text-muted-foreground">{offer.offer_message}</p>}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={!!acceptingLargeOffer}
+                    onClick={() => rejectLargeOffer(offer.id)}
+                    className="rounded-xl border border-border bg-white py-3 text-xs font-black disabled:opacity-50"
+                  >
+                    رفض العرض
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!!acceptingLargeOffer}
+                    onClick={() => acceptLargeOffer(offer.id)}
+                    className="rounded-xl bg-primary text-primary-foreground py-3 text-xs font-black disabled:opacity-50"
+                  >
+                    {acceptingLargeOffer === offer.id ? "جارٍ التنفيذ..." : "الموافقة"}
+                  </button>
+                </div>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={retryLargeOffers}
+              disabled={retryingLargeOffers}
+              className="w-full rounded-xl border border-orange-300 bg-white py-3 text-sm font-black text-orange-800 disabled:opacity-50"
+            >
+              {retryingLargeOffers ? "جارٍ إعادة إرسال الطلب..." : "إعادة إرسال الطلب لأصحاب السيارات"}
+            </button>
+          </div>
+        )}
+
+        {trackingActive && (
+          <div className="space-y-2">
+            {req.type !== "taxi" && <div className="flex items-center justify-between text-xs font-bold text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <Navigation className="h-3.5 w-3.5 text-primary animate-pulse" />
+                <span>{myRole === "customer" ? (req.type === "taxi" ? "موقع السائق" : "موقع الفني") : "موقع العميل"}</span>
+              </div>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${driverLocationFresh ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
+                {driverLocationFresh ? "GPS مباشر" : driverLiveLocation ? "آخر موقع معروف" : "بانتظار GPS"}
+              </span>
+            </div>}
+            <LiveTrackMap
+              me={myLive}
+              other={otherLive}
+              routePoints={providerRoutePoints}
+              pickupCoords={
+                req.pickup_lat != null && req.pickup_lng != null
+                  ? { lat: Number(req.pickup_lat), lng: Number(req.pickup_lng) }
+                  : null
+              }
+              destCoords={
+                req.dest_lat != null && req.dest_lng != null
+                  ? { lat: Number(req.dest_lat), lng: Number(req.dest_lng) }
+                  : null
+              }
+              status={req.status}
+              myRole={myRole}
+              serviceType={req.type}
+              driverName={other?.full_name ?? "الفني"}
+              driverPhone={other?.phone}
+              vehicleCategory={req.vehicle_category}
+              vehicleType={req.vehicle_type}
+              serviceSlug={req.services?.slug}
+              serviceName={req.services?.name_ar}
+              height={req.type === "taxi" ? 390 : 280}
+              showStatusOverlay
+              fullscreen={mapOpen}
+              onClose={() => setMapOpen(false)}
+              onOpenNavigation={myRole === "provider" ? () => setNavModalOpen(true) : undefined}
+            />
+          </div>
+        )}
+
+        {trackingActive && myRole === "customer" && (
+          <Button variant="outline" className="w-full h-12" onClick={() => setMapOpen(true)}>
+            <MapPin className="h-4 w-4" /> تكبير الخريطة ومتابعة {req.type === "taxi" ? "السائق" : "الفني"}
+          </Button>
+        )}
+        {(req.type !== "taxi" || req.vehicle_category === "large") && <div className="glass rounded-2xl p-4 text-sm space-y-2">
+          <div><span className="text-muted-foreground text-xs">📍 الموقع: </span><span className="font-bold">{req.pickup_text}</span></div>
+          {req.dest_text && <div><span className="text-muted-foreground text-xs">🎯 الوجهة: </span><span className="font-bold">{req.dest_text}</span></div>}
+          {req.notes && <div><span className="text-muted-foreground text-xs">📝 ملاحظة: </span><span>{req.notes}</span></div>}
+        </div>}
+
+        {myRole === "customer" && req.status === "cancelled" && req.payment_method === "zaincash" && (
+          <div className="glass rounded-2xl border border-amber-500/30 p-4 space-y-2">
+            <div className="font-black text-sm">متابعة إلغاء واسترداد زين كاش</div>
+            <p className="text-xs text-muted-foreground">تم تسجيل إلغاء الطلب المدفوع بزين كاش. ستصلك إشعارات عند صدور قرار الإدارة أو تسجيل إعادة المبلغ. لم يتم أي تحويل تلقائي.</p>
+            <a href={"/support-chat?requestId=" + encodeURIComponent(req.id)} className="inline-flex rounded-xl bg-primary px-4 py-2.5 text-xs font-black text-primary-foreground">مراسلة شركة ممنون بخصوص هذا الطلب</a>
+          </div>
+        )}
+        {myRole === "customer" && ["pending", "searching"].includes(req.status as string) && (
+          <button
+            onClick={() => setShowCancel(true)}
+            className="mx-5 mb-4 w-[calc(100%-2.5rem)] min-h-14 rounded-2xl border-2 border-destructive/25 bg-destructive/10 text-destructive font-black text-base active:scale-[0.99] transition"
+          >
+            {req.type === "taxi" ? "إلغاء الرحلة" : "إلغاء الطلب"}
+          </button>
+        )}
+
+        {other && req.status !== "pending" && !["completed", "cancelled"].includes(req.status as string) && (
+          <div className={`glass rounded-2xl ${req.type === "taxi" ? "p-2.5 space-y-2" : "p-4 space-y-4"}`}>
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={`${req.type === "taxi" ? "h-9 w-9 rounded-xl" : "h-12 w-12 rounded-2xl"} overflow-hidden bg-gradient-to-br from-primary to-primary-glow grid place-items-center text-primary-foreground font-black shrink-0`}>
+                {other.avatar_url && !otherAvatarFailed ? (
+                  <img src={other.avatar_url} alt={other.full_name || "صورة المستخدم"} onError={() => setOtherAvatarFailed(true)} className="h-full w-full object-cover" />
+                ) : (
+                  (other.full_name || "?").charAt(0)
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-black text-sm truncate">{other.full_name || "مستخدم"}</div>
+                <div className="text-xs text-muted-foreground mt-0.5" dir="ltr">{other.phone}</div>
+                <div className="flex items-center gap-2 mt-2">
+                  {!!other.phone && <ContactOptions phone={other.phone} label="اتصال / واتساب" />}
+                  {chat && !["completed", "cancelled"].includes(req.status as string) && <button type="button" onClick={() => setShowChat(true)} className="rounded-xl bg-primary/10 text-primary px-3 py-1.5 text-[11px] font-black">المحادثة{messages.length ? ` · ${messages.length}` : ""}</button>}
+                </div>
+                {otherBadges.length > 0 && req.type !== "taxi" && (
+                  <div className="flex flex-wrap gap-1 mt-1">{otherBadges.map((b) => <ReputationBadge key={b.code} badge={b} size="sm" />)}</div>
+                )}
+              </div>
+              {req.type !== "taxi" && <span className="text-[10px] rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-2.5 py-1 font-bold shrink-0">{req.status === "accepted" ? "تم القبول" : req.status === "in_progress" ? "قيد التنفيذ" : "مكتمل"}</span>}
+            </div>
+            {["accepted", "in_progress"].includes(req.status as string) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {req.status === "accepted" && myRole === "provider" &&
+                  (req.type !== "taxi" || req.vehicle_category === "large") &&
+                  !req.provider_arrived_at && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          const { error } = await (supabase as any).rpc("mark_service_request_arrived", { _request_id: id });
+                          if (error) throw error;
+                          toast.success("تم تسجيل وصولك إلى موقع الزبون");
+                          await loadAll();
+                        } catch (e: any) {
+                          toast.error(e.message ?? "تعذّر تأكيد الوصول");
+                        }
+                      }}
+                      className="w-full min-h-14 rounded-2xl bg-primary text-primary-foreground font-black text-base shadow-md active:scale-[0.99] transition"
+                    >
+                      {req.vehicle_category === "large" ? "وصلت للزبون" : "وصلت للموقع"}
+                    </button>
+                )}
+                {req.status === "accepted" && myRole === "provider" &&
+                  ((req.type === "taxi" && req.vehicle_category !== "large") || !!req.provider_arrived_at) && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          await runStartRide({ data: { requestId: id } });
+                          toast.success(req.type === "taxi" ? "تم تسجيل ركوب الزبون وبدأت الرحلة" : "بدأ تنفيذ الخدمة");
+                        } catch (e: any) {
+                          toast.error(e.message ?? "تعذّر بدء التنفيذ");
+                        }
+                      }}
+                      className="w-full min-h-14 rounded-2xl bg-primary text-primary-foreground font-black text-base shadow-md active:scale-[0.99] transition"
+                    >
+                      {req.type === "taxi" ? "ركب الزبون" : "بدء تنفيذ الخدمة"}
+                    </button>
+                )}
+                {req.status === "in_progress" && myRole === "provider" && (
+                  <button
+                    onClick={markCompleted}
+                    disabled={cashSettlementBusy}
+                    className="w-full min-h-14 rounded-2xl bg-success text-success-foreground font-black text-base shadow-md active:scale-[0.99] transition disabled:opacity-50"
+                  >
+                    {req.type === "taxi" ? "تأكيد إكمال الرحلة" : "تأكيد إكمال الطلب"}
+                  </button>
+                )}
+                {cashSettlementOpen && req.status === "in_progress" && myRole === "provider" && (
+                  <div className="rounded-2xl border border-primary/25 bg-card p-4 space-y-3">
+                    <div className="font-black text-sm">تسوية المبلغ النقدي</div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">الأجرة المطلوبة</span>
+                      <strong>{Number(req.customer_payable ?? req.customer_price ?? req.price_estimate ?? 0).toLocaleString("ar-IQ")} د.ع</strong>
+                    </div>
+                    {req.payment_method === "zaincash" ? (
+                      <p className="text-xs text-muted-foreground">الطلب مدفوع إلكترونياً؛ لا يوجد مبلغ نقدي مستلم.</p>
+                    ) : (
+                      <>
+                        <button type="button" onClick={() => setCashReceivedInput(String(Math.max(0, Math.round(Number(req.customer_payable ?? req.customer_price ?? req.price_estimate ?? 0)))))} className="w-full rounded-xl border border-primary/30 p-3 text-xs font-black text-primary">
+                          استلمت الأجرة بالضبط
+                        </button>
+                        <label className="block text-xs font-bold">كم استلمت من الزبون نقداً؟</label>
+                        <input
+                          inputMode="numeric"
+                          type="text"
+                          pattern="[0-9]*"
+                          maxLength={9}
+                          value={cashReceivedInput}
+                          onChange={(event) => setCashReceivedInput(normalizeCashDigits(event.target.value))}
+                          placeholder="مثلاً 5000"
+                          className="w-full rounded-xl border border-border bg-background p-3 text-sm font-bold outline-none focus:border-primary"
+                        />
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground">الباقي للزبون</span>
+                          <strong className="text-primary">{Math.max(0, (Number(cashReceivedInput) || 0) - Number(req.customer_payable ?? req.customer_price ?? req.price_estimate ?? 0)).toLocaleString("ar-IQ")} د.ع</strong>
+                        </div>
+                      </>
+                    )}
+                    <button type="button" disabled={cashSettlementBusy} onClick={() => void submitCashSettlement()} className="w-full rounded-xl bg-success p-3 text-sm font-black text-success-foreground disabled:opacity-50">
+                      {cashSettlementBusy ? "جارٍ تسجيل المبلغ..." : "تأكيد المبلغ وإنهاء الطلب"}
+                    </button>
+                    <button type="button" disabled={cashSettlementBusy} onClick={() => setCashSettlementOpen(false)} className="w-full rounded-xl border border-border p-3 text-xs font-bold">
+                      رجوع
+                    </button>
+                  </div>
+                )}
+                {["pending", "searching", "accepted"].includes(req.status as string) &&
+                  !req.provider_arrived_at && (
+                  <button
+                    onClick={() => setShowCancel(true)}
+                    className="w-full min-h-14 rounded-2xl border-2 border-destructive/25 bg-destructive/10 text-destructive font-black text-base active:scale-[0.99] transition"
+                  >
+                    {myRole === "customer" ? (req.type === "taxi" ? "إلغاء الرحلة" : "إلغاء الطلب") : "اعتذار عن الطلب"}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {req.status === "completed" && (
+          <div className="mx-5 mb-4 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 p-4 flex items-center gap-3">
+            <div className="h-12 w-12 shrink-0 rounded-2xl bg-emerald-500 text-white grid place-items-center text-2xl">✓</div>
+            <div>
+              <div className="font-black text-base text-emerald-700 dark:text-emerald-300">{req.type === "taxi" ? "اكتملت الرحلة" : "اكتملت الخدمة"}</div>
+              <div className="text-xs text-muted-foreground mt-1">{myRole === "customer" ? (req.type === "taxi" ? "أكد السائق إكمال الرحلة. تگدر هسه تقيّمه." : "أكد الفني إكمال الطلب. تگدر هسه تقيّمه.") : "تم تسجيل الإكمال بنجاح."}</div>
+              {myRole === "customer" && Number(req.cash_change_iqd ?? 0) > 0 && (
+                <div className="mt-2 rounded-xl bg-primary/10 px-3 py-2 text-xs font-black text-primary">
+                  تم إرجاع باقي المبلغ إلى محفظتك: {Number(req.cash_change_iqd).toLocaleString("ar-IQ")} د.ع
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {req.status === "completed" &&
+          other &&
+          (myRating ? (
+            <div className="glass rounded-2xl p-4 space-y-2">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="font-bold">تقييمك:</span>
+                <div className="flex gap-0.5">
+                  {[1, 2, 3, 4, 5].map((s) => (
+                    <Star
+                      key={s}
+                      className={`h-4 w-4 ${s <= myRating.stars ? "text-primary fill-primary" : "text-muted-foreground"}`}
+                    />
+                  ))}
+                </div>
+              </div>
+              {(myRating.professionalism || myRating.punctuality || myRating.quality) && (
+                <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground">
+                  <span>{myRole === "provider" ? "الاحترام" : req.type === "taxi" ? "الخصوصية والهدوء" : "جودة العمل"}: {myRating.professionalism ?? "—"}</span>
+                  <span>الالتزام بالموعد: {myRating.punctuality ?? "—"}</span>
+                  <span>{myRole === "provider" ? "التعاون والوضوح" : req.type === "taxi" ? "النظافة والقيادة الآمنة" : "التعامل والمحافظة على المكان"}: {myRating.quality ?? "—"}</span>
+                </div>
+              )}
+              {myRating.comment && (
+                <p className="text-muted-foreground text-xs">«{myRating.comment}»</p>
+              )}
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowRating(true)}
+              className="w-full glass rounded-2xl p-4 flex items-center justify-center gap-2 btn-press font-bold text-sm text-primary"
+            >
+              <Star className="h-5 w-5 fill-primary" /> قيّم الخدمة
+            </button>
+          ))}
+      </div>
+
+      {["in_progress", "completed"].includes(req.status) && otherUserId && (
+        <div className="mx-5 mb-4 rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4">
+          {!showReportForm ? (
+            <button type="button" onClick={() => setShowReportForm(true)} className="w-full flex items-center justify-between text-sm font-black text-amber-800 dark:text-amber-300">
+              <span>إبلاغ عن {myRole === "customer" ? (req.type === "taxi" ? "السائق" : "الفني") : "الزبون"}</span><span>إرسال بلاغ ←</span>
+            </button>
+          ) : (
+            <div className="space-y-3">
+              <div className="font-black text-sm">تفاصيل البلاغ للإدارة</div>
+              <select value={reportReason} onChange={(e) => setReportReason(e.target.value)} className="w-full rounded-xl border border-border bg-background px-3 py-3 text-sm">
+                <option>مشكلة أثناء الرحلة أو الخدمة</option><option>سلوك غير مناسب</option><option>مشكلة في السعر أو الاتفاق</option><option>تأخير أو عدم التزام</option><option>ضرر أو فقدان ممتلكات</option><option>سلامة أو قيادة خطرة</option><option>أخرى</option>
+              </select>
+              <textarea value={reportDetails} onChange={(e) => setReportDetails(e.target.value)} rows={3} maxLength={1500} placeholder="اشرح المشكلة بوضوح: ماذا حدث؟ ومتى؟ وأي تفاصيل تساعد الإدارة على التحقق..." className="w-full rounded-xl border border-border bg-background px-3 py-3 text-sm outline-none focus:border-primary" />
+              <div className="flex gap-2"><button type="button" disabled={reportBusy} onClick={() => setShowReportForm(false)} className="flex-1 rounded-xl border border-border py-3 text-xs font-bold">إلغاء</button><button type="button" disabled={reportBusy} onClick={submitUserReport} className="flex-1 rounded-xl bg-primary text-primary-foreground py-3 text-xs font-black">{reportBusy ? "جارٍ الإرسال..." : "إرسال البلاغ للإدارة"}</button></div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showChat && chat && !["completed", "cancelled"].includes(req.status as string) && (
+        <div className="fixed inset-0 z-[100] h-[100dvh] w-full bg-background flex flex-col">
+          <div className="shrink-0 flex items-center gap-3 border-b border-border bg-card px-4 pt-[max(env(safe-area-inset-top),12px)] pb-3">
+            <button type="button" onClick={() => setShowChat(false)} className="h-10 rounded-xl border border-border px-3 text-xs font-black">رجوع</button>
+            <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-primary/10 grid place-items-center text-primary font-black">
+              {other?.avatar_url && !otherAvatarFailed ? <img src={other.avatar_url} alt={other.full_name || "صورة المستخدم"} onError={() => setOtherAvatarFailed(true)} className="h-full w-full object-cover" /> : (other?.full_name || "?").charAt(0)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-black text-sm truncate">{other?.full_name || "المستخدم"}</div>
+              <div className="text-[10px] text-muted-foreground">المحادثة المباشرة · رقم الطلب {req.request_code || String(req.id).slice(0, 8).toUpperCase()}</div>
+            </div>
+            {other?.phone && <ContactOptions phone={other.phone} label="اتصال / واتساب" className="h-10 rounded-xl bg-primary px-3 grid place-items-center text-xs font-black text-primary-foreground" />}
+            <button type="button" onClick={() => { const next = !soundEnabled; setSoundEnabled(next); setSoundEnabledState(next); toast.success(next ? "تم تفعيل صوت الإشعارات" : "تم إيقاف صوت الإشعارات"); }} className="h-10 w-10 rounded-xl border border-border grid place-items-center" title={soundEnabled ? "إيقاف صوت الإشعارات" : "تفعيل صوت الإشعارات"}>{soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}</button>
+          </div>
+          <MamnoonChatThread
+            messages={messages.map((m) => ({
+              id: m.id,
+              senderId: m.sender_id,
+              body: m.content,
+              createdAt: m.created_at,
+            }))}
+            currentUserId={session.user.id}
+            draft={draft}
+            onDraftChange={setDraft}
+            onSend={() => void send()}
+            placeholder="اكتب رسالة..."
+            emptyText="ابدأ المحادثة 👋"
+            footer={
+              <div className="border-t border-border/60 px-3 pt-2">
+                <QuickReplies role={myRole} type={req.type as "taxi" | "service"} onPick={async (text) => {
+                  if (!chat || !session) return;
+                  const { error } = await supabase.from("messages").insert({ chat_id: chat.id, sender_id: session.user.id, content: text });
+                  if (error) toast.error(error.message);
+                }} />
+              </div>
+            }
+          />
+        </div>
+      )}
+
+      {["pending", "searching"].includes(req.status as string) && (
+        <div className="mx-5 my-5 rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/10 via-card to-card p-5 text-center shadow-sm">
+          {myRole === "customer" ? (
+            <>
+              <div className="mx-auto mb-3 grid h-16 w-16 place-items-center overflow-hidden rounded-2xl bg-primary/10 text-3xl">{req.type === "taxi" ? "🚕" : req.services?.slug ? <img src={serviceIcon(req.services.slug)} alt={req.services.name_ar || "الخدمة"} className="h-full w-full object-cover" /> : "🛠️"}</div>
+              {req.type === "service" && req.services?.name_ar && <div className="mb-1 text-sm font-black">{req.services.name_ar}</div>}
+              <div className="text-lg font-black text-foreground">طلبك وصل إلى ممنون</div>
+              <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                {req.vehicle_category === "large" ? "نبحث عن أصحاب السيارات المناسبة، وستظهر لك عروض الأسعار أول ما توصل." : req.type === "service" ? "نستقبل موافقات الفنيين إلى أن يكتمل عدد الفريق المطلوب أو تختار الاكتفاء بالعدد المتوفر." : "نبحث عن أقرب مزوّد متاح ومؤهل. أول شخص يقبل الطلب راح يتواصل وياك مباشرة."}
+              </p>
+              {req.type === "service" && <div className="mt-3 rounded-xl bg-background/80 p-3 text-sm font-black text-right">الفريق المؤكد: {acceptedPeopleCount} من {req.workers_count ?? 1} · المتبقي: {remainingPeopleCount}</div>}
+              {(
+                (() => {
+                  const start = Date.parse(req.searching_started_at || req.created_at || new Date().toISOString());
+                  const totalSeconds = 360 * (req.type === "service" ? Math.max(1, Number(req.workers_count) || 1) : 1);
+                  const remaining = Math.max(0, totalSeconds - Math.floor((dispatchClock - start) / 1000));
+                  const mm = String(Math.floor(remaining / 60)).padStart(2, "0");
+                  const ss = String(remaining % 60).padStart(2, "0");
+                  const progress = Math.max(0, Math.min(100, remaining / totalSeconds * 100));
+                  return <div className="mt-5 flex flex-col items-center gap-2">
+                    <div className={`grid h-28 w-28 place-items-center rounded-full ${remaining > 0 && remaining <= 10 ? "animate-pulse" : ""}`} style={{ background: `conic-gradient(${remaining > 0 && remaining <= 10 ? "hsl(var(--destructive))" : "hsl(var(--primary))"} ${progress}%, hsl(var(--muted)) ${progress}% 100%)` }}>
+                      <div className="grid h-24 w-24 place-items-center rounded-full bg-background">
+                        <div className="text-2xl font-black tabular-nums text-foreground">{mm}:{ss}</div>
+                        <div className="text-[10px] font-bold text-muted-foreground">وقت البحث</div>
+                      </div>
+                    </div>
+                    <div className="text-xs font-bold text-muted-foreground">{req.vehicle_category === "large" ? (remaining === 0 ? "انتهت جولات البحث، والعروض التي وصلت تبقى متاحة لاختيارك." : "نعرض الطلب على أصحاب السيارات ضمن ثلاثة نطاقات، ثم نعيد المحاولة مرة ثانية.") : req.type === "service" ? (Number(req.workers_count || 1) > 1 ? (req.staffing_search_paused_at ? "انتهت جولة البحث. الفنيون الموافقون محفوظون؛ اختَر تثبيت العدد الحالي أو البحث عن الباقين." : remaining === 0 ? "اكتملت جولة البحث، وننتظر تحديث حالة الطلب." : "نبحث ضمن نطاقات متدرجة عن العدد المطلوب.") : (remaining === 0 ? "انتهت مهلة البحث عن الفني." : "نبحث عن فني متاح ومؤهل بالقرب منك.")) : "نجرب ثلاث نطاقات قريبة ثم نعيد المحاولة مرة ثانية"}</div>
+                  </div>;
+                })()
+              )}
+              <div className="mt-5 rounded-2xl bg-background/80 p-3 text-right text-xs leading-6">
+                <div><b>من:</b> {req.pickup_text || "الموقع المحدد"}</div>
+                {req.dest_text && <div><b>إلى:</b> {req.dest_text}</div>}
+                {req.distance_km != null && <div><b>المسافة:</b> {Number(req.distance_km).toFixed(1)} كم</div>}
+                <div><b>السعر:</b> {Number(req.customer_payable ?? req.customer_price ?? req.price_estimate ?? 0).toLocaleString("ar-IQ")} د.ع</div>
+              </div>
+              {urgencyAllowed && Number(req.customer_price ?? req.price_estimate ?? 0) > 0 && <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3 text-right"><div className="font-black text-sm">⚡ وضع الاستعجال</div><div className="mt-1 text-xs text-muted-foreground">نسبة الزيادة الأساسية من الإدارة: {urgencyAdminPercent}٪. اختر ×2 أو ×3 لزيادة أجر الطلب وتشجيع المزوّدين على قبوله.</div><div className="mt-3 grid grid-cols-2 gap-2"><button disabled={urgencyBusy} onClick={() => void applyRequestUrgency(2)} className="rounded-xl bg-amber-500 px-3 py-3 text-sm font-black text-white disabled:opacity-50">×2 زيادة الاستعجال</button><button disabled={urgencyBusy} onClick={() => void applyRequestUrgency(3)} className="rounded-xl bg-primary px-3 py-3 text-sm font-black text-primary-foreground disabled:opacity-50">×3 أقصى استعجال</button></div>{Number(req.urgency_multiplier ?? 1) > 1 && <div className="mt-2 text-xs font-bold text-emerald-700">مفعّل حالياً ×{req.urgency_multiplier} · زيادة {Number(req.urgency_percent ?? 0)}٪</div>}</div>}
+              {myRole === "customer" && req.type === "taxi" && req.vehicle_category !== "large" && (
+                <div className="mt-3 rounded-2xl border border-amber-300/50 bg-background/80 p-3 text-right">
+                  {(req as any).taxi_urgency_enabled ? (
+                    <div className="text-sm font-black text-amber-600">⚡ وضع الاستعجال مفعّل — {Number((req as any).taxi_urgency_percent || 0)}٪</div>
+                  ) : (
+                    <button type="button" disabled={taxiUrgencyBusy} onClick={() => void enableTaxiUrgency()} className="w-full text-right text-sm font-black text-amber-600 disabled:opacity-50">
+                      {taxiUrgencyBusy ? "جارٍ تفعيل الاستعجال..." : "⚡ تفعيل وضع الاستعجال أثناء البحث"}
+                      <span className="mt-1 block text-[11px] font-medium text-muted-foreground">تُضاف الزيادة المحددة من الإدارة إلى الأجرة ويُعاد إرسال الطلب للسائقين</span>
+                    </button>
+                  )}
+                </div>
+              )}
+              {myRole === "customer" && ["pending", "searching"].includes(req.status as string) && (
+                <div className="mt-3 rounded-2xl border border-border bg-background/80 p-3 text-right">
+                  <div className="text-xs font-black">تأخر القبول؟ تگدر ترفع السعر حتى تشجع مزودين أكثر</div>
+                  <input type="number" min="250" max="50000" step="250" value={retryPriceIncrease} onChange={(e) => setRetryPriceIncrease(e.target.value)} placeholder="مقدار الزيادة بالدينار" className="mt-2 w-full rounded-xl border border-border bg-card px-3 py-3 text-center font-black" />
+                  <button disabled={retryingRequest} onClick={() => void retryFailedDispatch()} className="mt-2 min-h-11 w-full rounded-xl bg-primary text-primary-foreground font-black disabled:opacity-50">{retryingRequest ? "جارٍ تحديث السعر..." : "رفع السعر وإعادة البحث"}</button>
+                </div>
+              )}
+
+              {req.type === "service" && acceptedPeopleCount > 0 && !req.staffing_search_paused_at && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const { error } = await (supabase as any).rpc("stop_service_request_acceptance", { _request_id: id });
+                      if (error) throw error;
+                      toast.success("تم تثبيت الفريق الحالي وإيقاف استقبال فنيين إضافيين");
+                      await loadAll();
+                    } catch (error: any) {
+                      toast.error(error?.message ?? "تعذّر تثبيت الفريق الحالي");
+                    }
+                  }}
+                  className="mt-4 min-h-12 w-full rounded-2xl bg-emerald-600 text-white font-black"
+                >تثبيت العدد الحالي ({acceptedPeopleCount})</button>
+              )}
+              {req.type === "service" && req.staffing_search_paused_at && (
+                <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
+                  <div className="text-center font-black">انتهت جولة البحث</div>
+                  <div className="mt-2 text-center text-sm text-muted-foreground">الفريق المثبّت: {acceptedPeopleCount} من {req.workers_count || 1} · المتبقي: {remainingPeopleCount}</div>
+                  {acceptedPeopleCount > 0 && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          const { error } = await (supabase as any).rpc("stop_service_request_acceptance", { _request_id: id });
+                          if (error) throw error;
+                          toast.success("تم تثبيت العدد الحالي");
+                          await loadAll();
+                        } catch (error: any) {
+                          toast.error(error?.message ?? "تعذّر تثبيت العدد الحالي");
+                        }
+                      }}
+                      className="mt-3 min-h-12 w-full rounded-xl bg-emerald-600 text-white font-black"
+                    >تثبيت العدد الحالي ({acceptedPeopleCount})</button>
+                  )}
+                  <button
+                    onClick={async () => {
+                      try {
+                        const { error } = await (supabase as any).rpc("resume_service_request_staffing", { _request_id: id });
+                        if (error) throw error;
+                        toast.success("استأنفنا البحث عن الفنيين المتبقين");
+                        await loadAll();
+                      } catch (error: any) {
+                        toast.error(error?.message ?? "تعذّر استئناف البحث");
+                      }
+                    }}
+                    className="mt-2 min-h-12 w-full rounded-xl bg-primary text-primary-foreground font-black"
+                  >البحث عن الفنيين الباقين ({remainingPeopleCount})</button>
+                </div>
+              )}
+              <button onClick={() => setShowCancel(true)} className="mt-2 min-h-12 w-full rounded-2xl border border-destructive/20 bg-destructive text-white font-black">إلغاء الطلب</button>
+            </>
+          ) : (
+            <>
+              <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-primary" />
+              <div className="font-black">هذا الطلب قيد التوزيع</div>
+              <div className="mt-2 text-xs text-muted-foreground">إذا وصلك عرض فعّال راح يظهر عداده في شاشة الطلبات الواردة.</div>
+            </>
+          )}
+        </div>
+      )}
+      {myRole === "customer" && req.status === "cancelled" && req.cancellation_reason === "dispatch_no_provider" && (
+        <div className="mx-5 my-5 rounded-3xl border border-amber-500/30 bg-amber-500/5 p-5 text-center">
+          <div className="text-3xl">🤍</div>
+          <div className="mt-2 text-lg font-black">نعتذر منك، ما حصلنا مزوّد متاح</div>
+          <p className="mt-2 text-sm leading-7 text-muted-foreground">احتفظنا بكل تفاصيل طلبك. تگدر تعيد المحاولة مباشرة، أو تزيد السعر حتى تشجع مزوّدين أكثر.</p>
+          <label className="mt-4 block text-right text-xs font-bold text-muted-foreground">زيادة السعر اختيارياً (دينار عراقي)</label>
+          <input type="number" min="0" max="50000" step="250" value={retryPriceIncrease} onChange={(e) => setRetryPriceIncrease(e.target.value)} className="mt-2 w-full rounded-xl border border-border bg-background px-4 py-3 text-center font-black" />
+          <button disabled={retryingRequest} onClick={() => void retryFailedDispatch()} className="mt-3 min-h-12 w-full rounded-2xl bg-primary text-primary-foreground font-black disabled:opacity-50">{retryingRequest ? "جارٍ إعادة البحث..." : Number(retryPriceIncrease) > 0 ? "إعادة الطلب مع رفع السعر" : "إعادة نفس الطلب"}</button>
+        </div>
+      )}
+
+      {showCancel && (
+        <CancelReasonModal
+          role={myRole}
+          requestType={req.type}
+          onClose={() => setShowCancel(false)}
+          onSubmit={async (reason) => {
+            try {
+              if (myRole === "customer") {
+                await cancelFn({ data: { requestId: id, reason } });
+              } else {
+                await providerCancelFn({ data: { requestId: id, reason } });
+              }
+              toast.success(myRole === "customer" ? (req.type === "taxi" ? "تم إلغاء الرحلة وإبلاغ السائق" : "تم إلغاء الطلب وإبلاغ الفني") : (req.type === "taxi" ? "تم الاعتذار وإعادة الرحلة للبحث عن سائق آخر" : "تم الاعتذار وإعادة الطلب للبحث عن فني آخر"));
+              setShowCancel(false);
+              if (myRole === "provider") navigate({ to: "/home" });
+              else await loadAll();
+            } catch (e: any) {
+              const raw = String(e?.message ?? "");
+              const message = raw.includes("provider_already_arrived")
+                ? "مقدم الخدمة أكد وصوله، لذلك لا يمكن إلغاء الطلب الآن."
+                : raw.includes("taxi_trip_already_started")
+                  ? "بدأت الرحلة بالفعل ولا يمكن إلغاؤها بعد الانطلاق."
+                  : raw.includes("service_already_started")
+                    ? "بدأ تنفيذ الخدمة بالفعل ولا يمكن إلغاؤها من التطبيق."
+                    : raw.includes("request_finished")
+                      ? "هذا الطلب منتهٍ أو ملغي مسبقاً."
+                      : raw.includes("forbidden") || raw.includes("unauthorized")
+                        ? "تعذّر التحقق من صلاحيتك. سجّل الدخول من جديد وحاول."
+                        : "تعذّر تنفيذ الإلغاء حالياً. تحقق من اتصال الإنترنت وحاول مرة أخرى.";
+              toast.error(message);
+            }
+          }}
+        />
+      )}
+
+      {showRating && other && (
+        <RatingModal
+          target={other}
+          reasons={myRole === "provider"
+            ? ["محترم وحسن التعامل", "ملتزم بالموعد", "متعاون وواضح", "قدّم معلومات دقيقة", "احترم وقتي", "التزم بالاتفاق", "تأخر دون إشعار", "صعّب التواصل", "غيّر الاتفاق دون تنسيق", "تعامل غير لائق"]
+            : req.type === "taxi"
+              ? ["قيادة آمنة", "احترام الخصوصية", "وصل بالموعد", "حسن التعامل", "السيارة نظيفة", "المكيف يعمل", "تواصل واضح", "تأخر دون إشعار", "قيادة غير آمنة", "السيارة غير نظيفة", "تعامل غير لائق", "لم يلتزم بالاتفاق"]
+              : ["جودة العمل عالية", "أتقن العمل", "التزم بالموعد", "التزم بالسعر المتفق", "حسن التعامل", "حافظ على المكان", "تواصل واضح", "تأخر دون إشعار", "جودة العمل ضعيفة", "غيّر السعر دون اتفاق", "لم يحافظ على المكان", "تعامل غير لائق"]}
+          criteriaLabels={myRole === "provider"
+            ? ["التعامل والاحترام", "الالتزام بالموعد", "وضوح الطلب والاتفاق"]
+            : req.type === "taxi"
+              ? ["التعامل واحترام الخصوصية", "الالتزام بالوقت", "السلامة ونظافة المركبة"]
+              : ["الاحترافية والتعامل", "الالتزام بالموعد", "جودة تنفيذ العمل"]}
+          onClose={() => setShowRating(false)}
+          onSubmit={async (stars, comment, reasons, criteria) => {
+            const { data, error } = await (supabase as any)
+              .from("ratings")
+              .insert({
+                request_id: id,
+                rater_id: session.user.id,
+                ratee_id: other.id,
+                stars,
+                professionalism: criteria.professionalism,
+                punctuality: criteria.punctuality,
+                quality: criteria.quality,
+                reasons,
+                comment: comment || null,
+              })
+              .select()
+              .single();
+            if (error) {
+              toast.error(error.message?.includes("rating_already_given_this_week") ? "لقد تم تقييم هذا الشخص من قبلك خلال آخر 7 أيام." : error.message);
+              return;
+            }
+            setMyRating(data);
+            setShowRating(false);
+            toast.success("شكراً على تقييمك ⭐");
+          }}
+        />
+      )}
+
+      {myRole === "provider" && (
+        <NavigationAppModal
+          isOpen={navModalOpen}
+          onClose={() => setNavModalOpen(false)}
+          pickup={
+            req?.pickup_lat != null && req?.pickup_lng != null
+              ? {
+                  lat: Number(req.pickup_lat),
+                  lng: Number(req.pickup_lng),
+                  label: req.pickup_text || "موقع العميل",
+                }
+              : null
+          }
+          destination={
+            req?.dest_lat != null && req?.dest_lng != null
+              ? {
+                  lat: Number(req.dest_lat),
+                  lng: Number(req.dest_lng),
+                  label: req.dest_text || "وجهة الوصول",
+                }
+              : null
+          }
+          defaultTarget={req?.status === "accepted" ? "pickup" : "dest"}
+        />
+      )}
+    </div>
+  );
+}
+
+function RatingModal({
+  target,
+  reasons,
+  criteriaLabels,
+  onClose,
+  onSubmit,
+}: {
+  target: any;
+  reasons: string[];
+  criteriaLabels: string[];
+  onClose: () => void;
+  onSubmit: (stars: number, comment: string, selectedReasons: string[], criteria: { professionalism: number; punctuality: number; quality: number }) => Promise<void>;
+}) {
+  const [stars, setStars] = useState(0);
+  const [hover, setHover] = useState(0);
+  const [comment, setComment] = useState("");
+  const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
+  const [criteria, setCriteria] = useState({ professionalism: 0, punctuality: 0, quality: 0 });
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 backdrop-blur-md p-4" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm max-h-[92vh] overflow-y-auto rounded-[28px] bg-background border border-border/80 p-5 shadow-2xl relative animate-in fade-in zoom-in-95">
+        <button onClick={onClose} className="absolute top-3 left-3 h-9 w-9 rounded-full grid place-items-center text-muted-foreground hover:bg-secondary btn-press" aria-label="إغلاق">
+          <X className="h-5 w-5" />
+        </button>
+        <div className="text-center mb-4">
+          <div className="h-16 w-16 mx-auto rounded-3xl overflow-hidden bg-gradient-to-br from-slate-900 to-slate-700 grid place-items-center text-white font-black text-2xl mb-3 ring-2 ring-amber-400/50 shadow-lg">
+            {target.avatar_url ? <img src={target.avatar_url} alt={target.full_name || "صورة المستخدم"} className="h-full w-full object-cover" /> : (target.full_name || "?").charAt(0)}
+          </div>
+          <div className="text-[9px] font-black tracking-[0.18em] text-primary mb-1">MAMNOON · VERIFIED FEEDBACK</div>
+          <div className="font-black text-lg">كيف كانت تجربتك؟</div>
+          <div className="text-xs text-muted-foreground mt-1">قيّم {target.full_name || "المستخدم"}</div>
+        </div>
+
+        <div className="rounded-2xl bg-gradient-to-br from-slate-950 to-slate-800 border border-amber-400/40 p-3 shadow-lg mb-3">
+          <div className="flex justify-center gap-1" onMouseLeave={() => setHover(0)}>
+            {[1, 2, 3, 4, 5].map((s) => {
+              const active = s <= (hover || stars);
+              return <button key={s} type="button" onMouseEnter={() => setHover(s)} onClick={() => setStars(s)} className={`btn-press p-1.5 rounded-xl transition-all ${active ? "bg-amber-400/15 scale-110" : "hover:bg-white/5"}`}>
+                <Star className={`h-9 w-9 transition ${active ? "text-amber-300 fill-amber-300 drop-shadow-[0_3px_12px_rgba(251,191,36,0.65)]" : "text-white/25"}`} />
+              </button>;
+            })}
+          </div>
+          <div className="text-center text-xs font-black text-amber-300 mt-2">
+            {stars === 0 ? "اختَر تقييمك من نجمة إلى خمس نجوم" : ["", "ضعيف جداً", "ضعيف", "مقبول", "جيد جداً", "ممتاز"][stars]}
+          </div>
+        </div>
+
+        <div className="space-y-3 mb-4">
+          {(["professionalism", "punctuality", "quality"] as const).map((key, index) => (
+            <div key={key} className="rounded-2xl border border-border bg-card/80 p-3 flex items-center justify-between gap-3">
+              <span className="text-xs font-black text-foreground">{criteriaLabels[index]}</span>
+              <div className="flex gap-0.5 shrink-0" dir="ltr">
+                {[1, 2, 3, 4, 5].map((score) => <button key={score} type="button" aria-label={`${criteriaLabels[index]} ${score}`} onClick={() => setCriteria((current) => ({ ...current, [key]: score }))} className="p-0.5">
+                  <Star className={`h-5 w-5 ${score <= criteria[key] ? "text-amber-500 fill-amber-500" : "text-muted-foreground/25"}`} />
+                </button>)}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mb-3">
+          <div className="flex items-center justify-between text-xs font-black text-muted-foreground mb-2">
+            <span>شنو ميّز التجربة؟ (اختياري)</span><span className="text-primary">{selectedReasons.length}/12</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {reasons.map((reason) => {
+              const active = selectedReasons.includes(reason);
+              const limitReached = selectedReasons.length >= 12 && !active;
+              return <button key={reason} type="button" disabled={limitReached} onClick={() => setSelectedReasons((current) => active ? current.filter((item) => item !== reason) : [...current, reason])}
+                className={`rounded-xl border px-3 py-2 text-xs font-extrabold transition-all active:scale-95 ${active ? "border-primary bg-primary/10 text-primary shadow-sm" : "border-border bg-background text-muted-foreground"} ${limitReached ? "opacity-40" : ""}`}>
+                {active ? "✓  " : "+  "}{reason}
+              </button>;
+            })}
+          </div>
+        </div>
+
+        <textarea value={comment} onChange={(e) => setComment(e.target.value.slice(0, 500))} placeholder="ملاحظة إضافية (اختياري)..." rows={2}
+          className="w-full bg-input border border-border rounded-2xl px-4 py-3 text-sm outline-none focus:border-ring resize-none" />
+        <button disabled={busy || stars === 0 || Object.values(criteria).some((value) => value < 1)} onClick={async () => {
+          setBusy(true);
+          try { await onSubmit(stars, comment.trim(), selectedReasons.slice(0, 12), criteria); }
+          finally { setBusy(false); }
+        }} className="mt-4 w-full h-12 rounded-2xl bg-gradient-to-r from-slate-950 to-slate-800 border border-amber-400/40 text-white font-black btn-press shadow-lg disabled:opacity-50">
+          {busy ? <Loader2 className="h-5 w-5 animate-spin mx-auto" /> : "إرسال التقييم"}
+        </button>
+      </div>
+    </div>
+  );
+}

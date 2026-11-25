@@ -1,0 +1,677 @@
+import { useState, useEffect } from "react";
+import { useLocalSearchParams } from "expo-router";
+import {
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Image,
+} from "react-native";
+import * as ImagePicker from "expo-image-picker";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth-context";
+import { safeNavigate } from "@/lib/safe-navigation";
+import { Button } from "@/components/ui";
+import { palette, radius } from "@/styles/theme";
+import { LargeVehicleIllustration } from "@/components/large-vehicle-illustration";
+
+type VehicleModel = { id: string; make: string; model: string; category: string; min_year: number };
+type DocumentType = "national_id" | "driver_license";
+type PickedImage = { uri: string; mimeType?: string | null; fileName?: string | null };
+type PickedVideo = { uri: string; mimeType?: string | null; fileName?: string | null; fileSize?: number | null; duration?: number | null };
+
+const CATEGORIES = [
+  { key: "economy", label: "اقتصادي" },
+  { key: "premium", label: "متميز" },
+  { key: "luxury", label: "فاخر" },
+  { key: "large", label: "سيارات كبيرة (كيا حمل / كيا ركاب / باص)" },
+] as const;
+
+export default function DriverOnboarding() {
+  const { user, profile, refresh, setActiveRole } = useAuth();
+  // Accept both the native parameter and the web/deep-link parameter so
+  // customer entry points consistently open the large-vehicle registration flow.
+  const params = useLocalSearchParams<{ providerType?: string; provider?: string }>();
+  const largeDriverMode = params.providerType === "large_driver" || params.provider === "large_driver";
+  const providerRole = largeDriverMode ? "large_driver" : "driver";
+  const [companyName, setCompanyName] = useState("شركة ممنون");
+  const [models, setModels] = useState<VehicleModel[]>([]);
+  const [selectedMake, setSelectedMake] = useState("");
+  const [selectedModel, setSelectedModel] = useState<VehicleModel | null>(null);
+  const [customModelName, setCustomModelName] = useState("");
+  const [category, setCategory] = useState<"economy" | "premium" | "luxury" | "large">(largeDriverMode ? "large" : "economy");
+  const [vehicleType, setVehicleType] = useState<"kia_cargo" | "kia_passenger" | "bus" | null>(null);
+  const [vehicleArtwork, setVehicleArtwork] = useState<Record<string, any>>({});
+  const [year, setYear] = useState("");
+  const [plate, setPlate] = useState("");
+  const [color, setColor] = useState("");
+  const [legalName, setLegalName] = useState(profile?.full_name ?? "");
+  const [documentType, setDocumentType] = useState<DocumentType>("national_id");
+  const [facePhoto, setFacePhoto] = useState<PickedImage | null>(null);
+  const [idPhoto, setIdPhoto] = useState<PickedImage | null>(null);
+  const [idBackPhoto, setIdBackPhoto] = useState<PickedImage | null>(null);
+  const [vehicleDocumentPhoto, setVehicleDocumentPhoto] = useState<PickedImage | null>(null);
+  const [vehicleVideo, setVehicleVideo] = useState<PickedVideo | null>(null);
+  const [vehicleVideoPath, setVehicleVideoPath] = useState<string | null>(null);
+  const [vehicleVideoMaxDurationSeconds, setVehicleVideoMaxDurationSeconds] = useState(10);
+  const [changedDocuments, setChangedDocuments] = useState<Record<string, boolean>>({});
+  const [originalVehicle, setOriginalVehicle] = useState<Record<string, unknown>>({ make: "", model: "", year: "", plate: "", color: "", category: largeDriverMode ? "large" : "economy", vehicleType: null });
+  const [status, setStatus] = useState<string | null>(null);
+  const [savedModelName, setSavedModelName] = useState<string | null>(null);
+  const [rejectionReason, setRejectionReason] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [checkingSavedDriver, setCheckingSavedDriver] = useState(true);
+  const [vehicleChangeMode, setVehicleChangeMode] = useState(false);
+  const [pendingVehicleChange, setPendingVehicleChange] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    (supabase as any).from("app_ui_elements_public")
+      .select("element_key,published_config,title,sort_order")
+      .in("element_key", ["vehicle_kia_cargo", "vehicle_kia_passenger", "vehicle_bus"])
+      .then(({ data, error }: any) => {
+        if (!active || error) return;
+        const next: Record<string, any> = {};
+        for (const item of data ?? []) next[item.element_key] = { ...(item.published_config ?? {}), title: item.title, sort_order: item.sort_order };
+        setVehicleArtwork(next);
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    (supabase as any).from("company_settings").select("company_name,driver_video_max_duration_seconds").eq("id", 1).maybeSingle()
+      .then(({ data }: any) => {
+        if (data?.company_name) setCompanyName(data.company_name);
+        if (Number.isInteger(data?.driver_video_max_duration_seconds)) setVehicleVideoMaxDurationSeconds(Math.min(60, Math.max(1, data.driver_video_max_duration_seconds)));
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let active = true;
+    (supabase as any).from("provider_change_requests").select("id")
+      .eq("user_id", user.id).eq("provider_type", providerRole).eq("status", "pending").maybeSingle()
+      .then((result: any) => { if (active) setPendingVehicleChange(!!result.data); });
+    return () => { active = false; };
+  }, [user?.id, providerRole]);
+
+  useEffect(() => {
+    let active = true;
+    setCheckingSavedDriver(true);
+    supabase.from("vehicle_models").select("id,make,model,category,min_year").order("make")
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) Alert.alert("تنبيه", "تعذر تحميل قائمة السيارات.");
+        setModels((data ?? []) as VehicleModel[]);
+      });
+    if (user) {
+      Promise.all([
+        supabase.from("provider_verifications")
+          .select("status,rejection_reason,metadata")
+          .eq("user_id", user.id).eq("provider_type", providerRole).maybeSingle(),
+        supabase.from("driver_profiles")
+          .select("status,vehicle_make,vehicle_model,vehicle_year,vehicle_plate,vehicle_color,vehicle_category,vehicle_type")
+          .eq("user_id", user.id).maybeSingle(),
+      ]).then(async ([verification, driverProfile]) => {
+        if (!active) return;
+        const saved = driverProfile.data;
+        // Large-vehicle onboarding must never inherit taxi verification/status.
+        // driver_profiles is shared by the legacy taxi flow, so only trust its
+        // status and vehicle fields when its category matches this entry flow.
+        const relevantSaved = largeDriverMode
+          ? (saved?.vehicle_category === "large" ? saved : null)
+          : saved;
+        const verificationData = verification.data;
+        const m = (verificationData?.metadata ?? {}) as Record<string, unknown>;
+        const resolvedStatus = verificationData?.status ?? relevantSaved?.status ?? null;
+        if (resolvedStatus) setStatus(resolvedStatus);
+        setRejectionReason(verificationData?.rejection_reason ?? null);
+        const make = typeof relevantSaved?.vehicle_make === "string" ? relevantSaved.vehicle_make : m.vehicleMake;
+        const model = typeof relevantSaved?.vehicle_model === "string" ? relevantSaved.vehicle_model : m.vehicleModel;
+        const savedYear = typeof relevantSaved?.vehicle_year === "number" ? relevantSaved.vehicle_year : m.vehicleYear;
+        const savedPlate = typeof relevantSaved?.vehicle_plate === "string" ? relevantSaved.vehicle_plate : m.vehiclePlate;
+        const savedColor = typeof relevantSaved?.vehicle_color === "string" ? relevantSaved.vehicle_color : m.vehicleColor;
+        const savedCategory = relevantSaved?.vehicle_category ?? m.vehicleCategory;
+        if (typeof m.vehicleVideoPath === "string") setVehicleVideoPath(m.vehicleVideoPath);
+        if (typeof make === "string") setSelectedMake(make);
+        if (typeof model === "string") setSavedModelName(model);
+        if (typeof savedYear === "number") setYear(String(savedYear));
+        if (typeof savedPlate === "string") setPlate(savedPlate);
+        if (typeof savedColor === "string") setColor(savedColor);
+        if (largeDriverMode) setCategory("large");
+        else if (savedCategory === "economy" || savedCategory === "premium" || savedCategory === "luxury" || savedCategory === "large") setCategory(savedCategory);
+        const savedVehicleType = relevantSaved?.vehicle_type ?? m.vehicleType;
+        if (savedVehicleType === "kia_cargo" || savedVehicleType === "kia_passenger" || savedVehicleType === "bus") setVehicleType(savedVehicleType);
+        setOriginalVehicle({ make: make ?? (largeDriverMode ? "كيا" : ""), model: model ?? (largeDriverMode ? "كيا حمل" : ""), year: savedYear == null ? "" : String(savedYear), plate: savedPlate ?? "", color: savedColor ?? null, category: savedCategory ?? (largeDriverMode ? "large" : "economy"), vehicleType: savedVehicleType ?? null });
+        setCheckingSavedDriver(false);
+      }).catch(() => { if (active) setCheckingSavedDriver(false); });
+    } else {
+      setCheckingSavedDriver(false);
+    }
+    return () => { active = false; };
+  }, [user?.id, providerRole]);
+
+  useEffect(() => {
+    if (!selectedModel && selectedMake && savedModelName && models.length) {
+      const found = models.find((m) => m.make === selectedMake && m.model === savedModelName);
+      if (found) setSelectedModel(found);
+    }
+  }, [models, selectedMake, savedModelName, selectedModel]);
+
+  const makes = [...new Set(models.map((m) => m.make))];
+
+  // The model catalogue determines the vehicle/pricing category; the driver cannot choose it.
+  useEffect(() => {
+    if (largeDriverMode) {
+      setCategory("large");
+      return;
+    }
+    if (selectedModel && ["economy", "premium", "luxury"].includes(selectedModel.category)) {
+      setCategory(selectedModel.category as "economy" | "premium" | "luxury");
+    } else {
+      setCategory("economy");
+    }
+  }, [selectedModel, largeDriverMode]);
+
+  async function pickPhoto(kind: "face" | "id" | "id-back" | "vehicle-document", source?: "camera" | "library") {
+    try {
+      let result: ImagePicker.ImagePickerResult;
+      if (kind === "face" || source === "camera") {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert("إذن الكاميرا", "اسمح للتطبيق باستخدام الكاميرا لالتقاط صورة الوجه.");
+          return;
+        }
+        result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ["images"],
+          // Avoid the Android system crop screen whose action is labelled "قص".
+          // The app asks the user to confirm the selected photo in Arabic instead.
+          allowsEditing: false,
+          quality: 0.85,
+        });
+      } else {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert("إذن الصور", kind === "vehicle-document" ? "اسمح للتطبيق بالوصول إلى الصور حتى تختار السنوية أو الوكالة." : "اسمح للتطبيق بالوصول إلى الصور لاختيار صورة المستمسك.");
+          return;
+        }
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ["images"],
+          // Keep photo selection in the gallery; confirm it with the app's Arabic action.
+          allowsEditing: false,
+          quality: 0.75,
+        });
+      }
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        const picked = { uri: asset.uri, mimeType: asset.mimeType, fileName: asset.fileName };
+        const photoTitle = kind === "face" ? "الصورة الشخصية"
+          : kind === "id" ? "البطاقة الوطنية الأمامية"
+          : kind === "id-back" ? "البطاقة الوطنية الخلفية" : "مستند السيارة";
+        Alert.alert("تأكيد الصورة", `تم اختيار ${photoTitle}. هل تريد اعتمادها؟`, [
+          { text: "إعادة الاختيار", style: "cancel" },
+          { text: "اعتماد الصورة", onPress: () => {
+            if (kind === "face") { setFacePhoto(picked); setChangedDocuments((current) => ({ ...current, face_photo: true })); }
+            else if (kind === "id") { setIdPhoto(picked); setChangedDocuments((current) => ({ ...current, id_card: true })); }
+            else if (kind === "id-back") { setIdBackPhoto(picked); setChangedDocuments((current) => ({ ...current, id_card_back: true })); }
+            else { setVehicleDocumentPhoto(picked); setChangedDocuments((current) => ({ ...current, vehicle_document: true })); }
+          } },
+        ]);
+      }
+    } catch {
+      Alert.alert("خطأ", "تعذر اختيار الصورة. حاول مرة أخرى.");
+    }
+  }
+
+  async function pickVehicleVideo(source: "camera" | "library") {
+    try {
+      if (source === "camera") {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) { Alert.alert("إذن الكاميرا", "اسمح لممنون باستخدام الكاميرا لتصوير فيديو السيارة."); return; }
+      } else {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) { Alert.alert("إذن الفيديوهات", "اسمح لممنون بالوصول إلى الفيديوهات لاختيار فيديو السيارة."); return; }
+      }
+      const options = { mediaTypes: ["videos"] as any, allowsEditing: false, videoMaxDuration: vehicleVideoMaxDurationSeconds };
+      const result = source === "camera"
+        ? await ImagePicker.launchCameraAsync(options)
+        : await ImagePicker.launchImageLibraryAsync(options);
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0] as any;
+      if (typeof asset.fileSize === "number" && asset.fileSize > 50 * 1024 * 1024) {
+        Alert.alert("حجم الفيديو كبير", "الحد الأعلى للفيديو 50 ميغابايت. اختَر فيديو أقل حجماً."); return;
+      }
+      const durationMs = typeof asset.duration === "number" ? asset.duration : null;
+      if (durationMs === null || !Number.isFinite(durationMs) || durationMs <= 0) {
+        Alert.alert("تعذر قراءة مدة الفيديو", "اختَر فيديو آخر حتى نتحقق من مدته قبل الرفع."); return;
+      }
+      if (durationMs > vehicleVideoMaxDurationSeconds * 1000) {
+        Alert.alert("الفيديو أطول من المسموح", `الحد الأعلى لمدة فيديو السيارة ${vehicleVideoMaxDurationSeconds} ثوانٍ. قصّ الفيديو ثم أعد اختياره.`); return;
+      }
+      setVehicleVideo({ uri: asset.uri, mimeType: asset.mimeType, fileName: asset.fileName, fileSize: asset.fileSize, duration: asset.duration });
+      setVehicleVideoPath(null);
+      setChangedDocuments((current) => ({ ...current, vehicle_video: true }));
+    } catch {
+      Alert.alert("تعذر إرفاق الفيديو", "حاول تصوير الفيديو أو اختياره من المعرض مرة ثانية.");
+    }
+  }
+
+  async function uploadVideo(video: PickedVideo) {
+    if (!user) throw new Error("انتهت جلسة الدخول.");
+    const response = await fetch(video.uri);
+    const body = await response.arrayBuffer();
+    const mime = video.mimeType && ["video/mp4", "video/quicktime", "video/webm"].includes(video.mimeType) ? video.mimeType : "video/mp4";
+    const extension = mime === "video/quicktime" ? "mov" : mime === "video/webm" ? "webm" : "mp4";
+    const path = `${user.id}/${providerRole}/vehicle-video-${Date.now()}.${extension}`;
+    const { error } = await supabase.storage.from("provider-verification").upload(path, body, { contentType: mime, upsert: true, cacheControl: "3600" });
+    if (error) throw new Error(`تعذر رفع فيديو السيارة: ${error.message}`);
+    return path;
+  }
+
+  async function uploadImage(image: PickedImage, kind: "face" | "id-card" | "id-card-back" | "vehicle-registration") {
+    if (!user) throw new Error("انتهت جلسة الدخول.");
+    const response = await fetch(image.uri);
+    const body = await response.arrayBuffer();
+    const mime = image.mimeType === "image/png" ? "image/png" : "image/jpeg";
+    const extension = mime === "image/png" ? "png" : "jpg";
+    const path = `${user.id}/${providerRole}/${kind}-change-${Date.now()}.${extension}`;
+    const { error } = await supabase.storage.from("provider-verification").upload(path, body, {
+      contentType: mime, upsert: true, cacheControl: "3600",
+    });
+    if (error) throw new Error("تعذر رفع المستند المحدد. تحقق من اتصال الإنترنت وحاول مرة ثانية.");
+    return path;
+  }
+
+  async function submit() {
+    if (!user) {
+      Alert.alert("خطأ", "انتهت جلسة الدخول. سجّل الدخول مرة أخرى.");
+      return;
+    }
+    if (vehicleChangeMode) {
+      setBusy(true);
+      try {
+        const candidateVehicle = {
+          make: largeDriverMode ? String(originalVehicle.make || "كيا") : selectedMake,
+          model: largeDriverMode ? (vehicleType ? (vehicleType === "kia_cargo" ? "كيا حمل" : vehicleType === "kia_passenger" ? "كيا ركاب" : "باص") : String(originalVehicle.model || "")) : (selectedModel?.model ?? savedModelName ?? ""),
+          year: year.trim(),
+          plate: plate.trim(),
+          color: color.trim() || null,
+          category,
+          vehicleType: largeDriverMode ? vehicleType : null,
+        };
+        const changedVehicle: Record<string, unknown> = {};
+        if (candidateVehicle.make !== originalVehicle.make) changedVehicle.vehicle_make = candidateVehicle.make;
+        if (candidateVehicle.model !== originalVehicle.model) changedVehicle.vehicle_model = candidateVehicle.model;
+        if (candidateVehicle.year !== originalVehicle.year) {
+          if (candidateVehicle.year.length !== 4 || !Number.isInteger(Number(candidateVehicle.year)) || Number(candidateVehicle.year) < 1900 || Number(candidateVehicle.year) > new Date().getFullYear() + 1) {
+            Alert.alert("بيانات المركبة", "أدخل سنة الصنع بشكل صحيح.");
+            return;
+          }
+          changedVehicle.vehicle_year = Number(candidateVehicle.year);
+        }
+        if (candidateVehicle.plate !== originalVehicle.plate) {
+          if (candidateVehicle.plate.length < 2) {
+            Alert.alert("بيانات المركبة", "أدخل رقم اللوحة بشكل صحيح.");
+            return;
+          }
+          changedVehicle.vehicle_plate = candidateVehicle.plate;
+        }
+        if (candidateVehicle.color !== originalVehicle.color) changedVehicle.vehicle_color = candidateVehicle.color;
+        if (!largeDriverMode && candidateVehicle.category !== originalVehicle.category) changedVehicle.vehicle_category = candidateVehicle.category;
+        if (largeDriverMode && candidateVehicle.vehicleType !== originalVehicle.vehicleType) changedVehicle.vehicle_type = candidateVehicle.vehicleType;
+        if (Object.keys(changedVehicle).length && !largeDriverMode && (!candidateVehicle.make || !candidateVehicle.model)) {
+          Alert.alert("بيانات المركبة", "اختر ماركة وموديل المركبة.");
+          return;
+        }
+        if (Object.keys(changedVehicle).length && largeDriverMode && !candidateVehicle.vehicleType) {
+          Alert.alert("بيانات المركبة", "اختر نوع المركبة.");
+          return;
+        }
+        const documents: Record<string, string> = {};
+        if (changedDocuments.face_photo && facePhoto) documents.face_photo = await uploadImage(facePhoto, "face");
+        if (changedDocuments.id_card && idPhoto) documents.id_card = await uploadImage(idPhoto, "id-card");
+        if (changedDocuments.id_card_back && idBackPhoto) documents.id_card_back = await uploadImage(idBackPhoto, "id-card-back");
+        if (changedDocuments.vehicle_document && vehicleDocumentPhoto) documents.vehicle_document = await uploadImage(vehicleDocumentPhoto, "vehicle-registration");
+        if (changedDocuments.vehicle_video && vehicleVideo) {
+          const uploadedVideoPath = await uploadVideo(vehicleVideo);
+          documents.vehicle_video = uploadedVideoPath;
+          setVehicleVideoPath(uploadedVideoPath);
+        }
+        if (!Object.keys(changedVehicle).length && !Object.keys(documents).length) {
+          Alert.alert("ماكو تغييرات", "ماكو بيانات أو مستندات جديدة لإرسالها.");
+          return;
+        }
+        // Reconcile a missing provider role only through the server-side guard;
+        // this function grants the role only when the provider profile is approved.
+        const { data: roleGranted, error: roleError } = await supabase.rpc("grant_provider_role_safe", { _role: providerRole as any });
+        if (roleError) throw new Error(`تعذر التحقق من اعتماد حساب السائق: ${roleError.message}`);
+        if (roleGranted !== true) {
+          throw new Error("هذا المسار مخصص للحساب المعتمد فقط. إذا كنت تسجل لأول مرة، ارجع إلى التسجيل الأولي ولا ترسل طلب تحديث.");
+        }
+        const { error } = await (supabase as any).rpc("submit_provider_change_request", {
+          _provider_type: providerRole,
+          _requested_data: {
+            ...(Object.keys(changedVehicle).length ? { vehicle_update: changedVehicle } : {}),
+            ...(Object.keys(documents).length ? { documents } : {}),
+          },
+        });
+        if (error) throw error;
+        setPendingVehicleChange(true);
+        setChangedDocuments({});
+        setVehicleChangeMode(false);
+        setStatus("approved");
+        Alert.alert("تم إرسال الطلب", "وصل طلب تحديث بياناتك إلى الإدارة. بياناتك الحالية تبقى فعالة لحين الموافقة.");
+      } catch (error: any) {
+        Alert.alert("تعذر إرسال الطلب", error?.message || "حاول مرة ثانية.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    if (largeDriverMode && !vehicleType) {
+      Alert.alert("نوع المركبة مطلوب", "اختار كيا حمل أو كيا ركاب أو باص حتى نحدد الطلبات المناسبة لمركبتك.");
+      return;
+    }
+    const vehicleYear = Number(year.trim());
+    const largeModelName = vehicleType === "kia_cargo" ? "كيا حمل" : vehicleType === "kia_passenger" ? "كيا ركاب" : "باص";
+    const catalogModel = category === "large" ? models.find((m) => m.make === "Kia" && m.model === largeModelName) : selectedModel;
+    const resolvedModel: VehicleModel = catalogModel ?? {
+      id: "large-kia-local",
+      make: category === "large" ? "Kia" : selectedMake,
+      model: category === "large" ? largeModelName : customModelName.trim(),
+      category: category === "large" ? "large" : "economy",
+      min_year: 1990,
+    };
+    if ((category !== "large" && !selectedModel && !customModelName.trim()) || !/^\d{4}$/.test(year.trim()) || !plate.trim()) {
+      Alert.alert("بيانات السيارة", category === "large"
+        ? "أدخل سنة الصنع ورقم اللوحة."
+        : "اختر ماركة وموديل السيارة وأدخل سنة الصنع ورقم اللوحة.");
+      return;
+    }
+    if (!Number.isInteger(vehicleYear) || vehicleYear < (category === "large" ? 1990 : resolvedModel.min_year) || vehicleYear > new Date().getFullYear() + 1) {
+      const minimumYear = category === "large" ? 1990 : resolvedModel.min_year;
+      Alert.alert("سنة الصنع غير صحيحة", `السنة يجب أن تكون بين ${minimumYear} و${new Date().getFullYear() + 1}.`);
+      return;
+    }
+    if (legalName.trim().length < 5) {
+      Alert.alert("الاسم مطلوب", "اكتب الاسم الثلاثي واللقب كما هو في الهوية.");
+      return;
+    }
+    if (!facePhoto || !idPhoto || (documentType === "national_id" && !idBackPhoto) || !vehicleDocumentPhoto) {
+      Alert.alert("المستندات مطلوبة", "أرفق صورة الوجه والهوية ومستند السيارة الرسمي.");
+      return;
+    }
+    if (!vehicleVideo && !vehicleVideoPath) {
+      Alert.alert("فيديو السيارة مطلوب", "أرفق فيديو واضحاً تظهر فيه السيارة كاملة ورقم لوحتها بوضوح.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const { error: profileError } = await supabase.from("profiles")
+        .update({ full_name: legalName.trim() }).eq("id", user.id);
+      if (profileError) throw new Error(`تعذر تحديث الاسم: ${profileError.message}`);
+
+      const { error: driverError } = await supabase.from("driver_profiles").upsert({
+        user_id: user.id,
+        vehicle_make: category === "large" ? "Kia" : selectedMake,
+        vehicle_model: resolvedModel.model,
+        vehicle_year: vehicleYear,
+        vehicle_category: category as any,
+        vehicle_type: category === "large" ? vehicleType : null,
+        vehicle_plate: plate.trim(),
+        vehicle_color: color.trim() || null,
+        available: false,
+        status: "pending",
+      }, { onConflict: "user_id" });
+      if (driverError) throw new Error(`تعذر إنشاء ملف السائق: ${driverError.message}`);
+
+      const [facePath, idPath, idBackPath, vehicleDocumentPath] = await Promise.all([
+        uploadImage(facePhoto, "face"),
+        uploadImage(idPhoto, "id-card"),
+        idBackPhoto ? uploadImage(idBackPhoto, "id-card-back") : Promise.resolve(null),
+        uploadImage(vehicleDocumentPhoto, "vehicle-registration"),
+      ]);
+      const uploadedVehicleVideoPath = vehicleVideo ? await uploadVideo(vehicleVideo) : vehicleVideoPath;
+      const { error: verificationError } = await supabase.from("provider_verifications").upsert({
+        user_id: user.id,
+        provider_type: providerRole,
+        legal_name: legalName.trim(),
+        phone: profile?.phone ?? null,
+        email: user.email ?? null,
+        face_photo_path: facePath,
+        id_card_photo_path: idPath,
+        id_card_back_photo_path: idBackPath,
+        vehicle_document_path: vehicleDocumentPath,
+        document_type: documentType,
+        metadata: {
+          vehicleMake: selectedMake,
+          vehicleModel: resolvedModel.model,
+          vehicleYear,
+          vehiclePlate: plate.trim(),
+          vehicleColor: color.trim() || null,
+          vehicleCategory: category,
+          vehicleType: category === "large" ? vehicleType : null,
+          vehicleVideoPath: uploadedVehicleVideoPath,
+        },
+        status: "pending",
+        rejection_reason: null,
+        submitted_at: new Date().toISOString(),
+        reviewed_at: null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id,provider_type" });
+      if (verificationError) throw new Error(`تعذر حفظ طلب التوثيق: ${verificationError.message}`);
+
+      setVehicleVideoPath(uploadedVehicleVideoPath);
+      setVehicleVideo(null);
+      setStatus("pending");
+      setChangedDocuments({});
+      setRejectionReason(null);
+      await refresh();
+      Alert.alert("تم إرسال الطلب", "وصل طلبك إلى إدارة " + companyName + " وهو الآن بانتظار الموافقة. لا يمكنك استقبال الرحلات قبل الاعتماد.");
+    } catch (err: unknown) {
+      Alert.alert("تعذر إكمال التسجيل", err instanceof Error ? err.message : "حدث خطأ غير متوقع.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (checkingSavedDriver) {
+    return <View style={styles.statusContainer}><Text style={styles.statusText}>جاري استرجاع بيانات تسجيلك السابقة...</Text></View>;
+  }
+
+  if (status === "pending" || status === "approved") {
+    return (
+      <View style={styles.statusContainer}>
+        <Text style={styles.title}>{status === "approved" ? "تم اعتماد حسابك" : "طلبك قيد المراجعة"}</Text>
+        <Text style={styles.statusText}>
+          {status === "approved"
+            ? (largeDriverMode ? "تم اعتمادك سائقاً للسيارات الكبيرة. تقدر تستقبل طلبات كيا الحمل والركاب والباص حسب نوع مركبتك." : "تهانينا! تم تفعيل حسابك كسائق تكسي بعد تدقيق مستمسكاتك وسيارتك. نرحب بك ضمن أسرة شركة ممنون الموثّقة ونتمنى لك التوفيق والنجاح.")
+            : "استلمنا بيانات السيارة والهوية. طلبك الآن بانتظار موافقة " + companyName + "، وستتمكن من استقبال الرحلات بعد الاعتماد."}
+        </Text>
+        {status === "approved" ? (
+          <>
+          {pendingVehicleChange && <Text style={styles.note}>طلب تحديث بيانات المركبة أو مستنداتها بانتظار موافقة الإدارة. بياناتك الحالية تبقى فعالة.</Text>}
+          {!pendingVehicleChange && <Button title="تحديث بيانات المركبة أو مستنداتها" onPress={() => { setVehicleChangeMode(true); setStatus(null); }} />}
+          <Button title="تفعيل دور السائق والمتابعة" onPress={async () => {
+            if (!user) return;
+            setBusy(true);
+            try {
+              const { error } = await supabase.rpc("grant_provider_role_safe", { _role: providerRole });
+              if (error) throw error;
+              await refresh();
+              await setActiveRole(providerRole);
+              safeNavigate("/home", "replace");
+            } catch (error) {
+              Alert.alert("تعذر تفعيل دور السائق", error instanceof Error ? error.message : "تأكد من اعتماد طلبك ثم حاول مجدداً.");
+            } finally {
+              setBusy(false);
+            }
+          }} loading={busy} />
+          </>
+        ) : (
+          <View style={{ gap: 10 }}>
+            <Button title="تعديل البيانات وإعادة إرفاق السنوية والمستمسكات" onPress={() => setStatus(null)} />
+            <Button title="العودة للرئيسية" onPress={() => safeNavigate("/home", "replace")} />
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 48 }}>
+      <Text style={styles.title}>{vehicleChangeMode ? "تحديث بيانات المركبة أو مستنداتها" : largeDriverMode ? "تسجيل سائق السيارات الكبيرة" : "تسجيل كابتن التكسي"}</Text>
+      <Text style={styles.note}>{vehicleChangeMode ? "غيّر بيانات المركبة أو اختر مستنداً واحداً أو أكثر لاستبداله. المستندات التي لا تغيّرها تبقى كما هي، والتحديث لا يتفعّل إلا بعد موافقة الإدارة." : largeDriverMode ? "قسم مستقل لكيا الحمل وكيا الركاب والباص. أكمل بيانات المركبة والهوية." : "أكمل بيانات سيارة التكسي والهوية. حسابك يبقى معلّقاً لحين موافقة الإدارة."}</Text>
+      {!!rejectionReason && <Text style={styles.rejection}>سبب الرفض السابق: {rejectionReason}</Text>}
+
+      <View style={{ backgroundColor: palette.brandSoft, borderColor: palette.line, borderWidth: 1, borderRadius: radius.lg, padding: 13, marginBottom: 12 }}>
+        <Text style={{ color: palette.ink, fontSize: 13, fontWeight: "900", textAlign: "right" }}>تصنيف المركبة تلقائي</Text>
+        <Text style={{ color: palette.muted, fontSize: 11, lineHeight: 19, textAlign: "right", marginTop: 5 }}>اكتب اسم السيارة أو اختر الموديل من القائمة، ويُحدد نوعها تلقائياً من سجل المركبات. رتبة أدائك تُحسب لاحقاً من الرحلات والتقييمات.</Text>
+      </View>
+
+      {category !== "large" && <>
+        <Text style={styles.label}>ماركة السيارة</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          {makes.map((m) => (
+            <TouchableOpacity key={m} style={[styles.chip, selectedMake === m && styles.chipActive]}
+              onPress={() => { setSelectedMake(m); setSelectedModel(null); }}>
+              <Text style={[styles.chipText, selectedMake === m && styles.chipTextActive]}>{m}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        {!!selectedMake && <>
+          <Text style={styles.label}>موديل السيارة</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            {models.filter((m) => m.make === selectedMake).map((m) => (
+              <TouchableOpacity key={m.id} style={[styles.chip, selectedModel?.id === m.id && styles.chipActive]}
+                onPress={() => { setSelectedModel(m); setCustomModelName(""); }}>
+                <Text style={[styles.chipText, selectedModel?.id === m.id && styles.chipTextActive]}>{m.model}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          <Text style={styles.label}>أو اكتب اسم الموديل إذا غير موجود بالقائمة</Text>
+          <TextInput
+            value={customModelName}
+            onChangeText={(value) => { setCustomModelName(value); setSelectedModel(null); }}
+            placeholder="اكتب اسم السيارة"
+            placeholderTextColor={palette.muted}
+            style={styles.input}
+            textAlign="right"
+          />
+        </>}
+      </>}
+
+      {category === "large" && (
+        <View style={{ marginTop: 12 }}>
+          <Text style={styles.label}>نوع السيارة الكبيرة</Text>
+          <View style={styles.row}>
+            {([{ key: "kia_cargo", label: "كيا حمل" }, { key: "kia_passenger", label: "كيا ركاب" }, { key: "bus", label: "باص" }] as const).map((item) => (
+              <TouchableOpacity key={item.key} style={[styles.category, vehicleType === item.key && styles.chipActive]} onPress={() => {
+                setVehicleType(item.key);
+                setSelectedMake("Kia");
+                setSelectedModel(models.find((m) => m.make === "Kia" && m.model === item.label) ?? null);
+              }}>
+                {(() => {
+                  const visualKey = item.key === "kia_cargo" ? "vehicle_kia_cargo" : item.key === "kia_passenger" ? "vehicle_kia_passenger" : "vehicle_bus";
+                  const visual = vehicleArtwork[visualKey];
+                  return visual?.image_url
+                    ? <Image source={{ uri: visual.image_url }} style={{ width: Number(visual.width_px) || 76, height: Number(visual.height_px) || 56, borderRadius: Number(visual.image_border_radius_px) || 10 }} resizeMode={visual.image_fit === "cover" ? "cover" : "contain"} />
+                    : visual?.icon_name
+                      ? <Text style={{ fontSize: 34 }}>{visual.icon_name}</Text>
+                      : <LargeVehicleIllustration kind={item.key} />;
+                })()}
+                <Text style={[styles.chipText, vehicleType === item.key && styles.chipTextActive]}>{vehicleArtwork[item.key === "kia_cargo" ? "vehicle_kia_cargo" : item.key === "kia_passenger" ? "vehicle_kia_passenger" : "vehicle_bus"]?.title || item.label}</Text>
+                {vehicleType === item.key && <Text style={{ color: palette.brand, fontSize: 10, fontWeight: "900", marginTop: 4 }}>تم الاختيار ✓</Text>}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+      <Text style={styles.label}>سنة الصنع</Text>
+      <TextInput style={styles.input} value={year} onChangeText={setYear} placeholder="2020" keyboardType="numeric" placeholderTextColor="#94a3b8" />
+      <Text style={styles.label}>رقم اللوحة</Text>
+      <TextInput style={styles.input} value={plate} onChangeText={setPlate} placeholder="رقم اللوحة والمحافظة" placeholderTextColor="#94a3b8" />
+      <Text style={styles.label}>لون السيارة</Text>
+      <TextInput style={styles.input} value={color} onChangeText={setColor} placeholder="أبيض" placeholderTextColor="#94a3b8" />
+
+      <Text style={styles.label}>الاسم الكامل المطابق للهوية</Text>
+      <TextInput style={styles.input} value={legalName} onChangeText={setLegalName} placeholder="الاسم الثلاثي واللقب" placeholderTextColor="#94a3b8" />
+      {largeDriverMode && <Text style={styles.note}>لسائقي كيا الحمل وكيا الركاب والباص: اكتب الاسم الكامل حرفياً كما هو في البطاقة الوطنية أو المستمسك الرسمي. ستتم مراجعة الاسم وصورة الوجه يدوياً قبل تفعيل حسابك.</Text>}
+
+      <Text style={styles.label}>نوع المستمسك</Text>
+      <View style={styles.row}>
+        <TouchableOpacity style={[styles.category, documentType === "national_id" && styles.chipActive]} onPress={() => setDocumentType("national_id")}>
+          <Text style={[styles.chipText, documentType === "national_id" && styles.chipTextActive]}>البطاقة الوطنية</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.category, documentType === "driver_license" && styles.chipActive]} onPress={() => setDocumentType("driver_license")}>
+          <Text style={[styles.chipText, documentType === "driver_license" && styles.chipTextActive]}>إجازة السوق</Text>
+        </TouchableOpacity>
+      </View>
+
+      <Text style={styles.label}>صورة الوجه الشخصية *</Text>
+      <Text style={styles.note}>الصورة الشخصية إلزامية لجميع فئات السائقين. ارفع صورة حديثة وواضحة لوجهك أنت، بدون فلاتر أو أشخاص آخرين، حتى تتمكن الإدارة من مطابقتها مع صورة الهوية قبل تفعيل الحساب.</Text>
+      <TouchableOpacity style={styles.photoButton} onPress={() => pickPhoto("face")}>
+        {facePhoto ? <Image source={{ uri: facePhoto.uri }} style={styles.preview} /> : <Text style={styles.photoText}>فتح الكاميرا والتقاط صورة الوجه</Text>}
+      </TouchableOpacity>
+      <Text style={styles.label}>{documentType === "national_id" ? "الجهة الأمامية للبطاقة الوطنية *" : "صورة إجازة السوق *"}</Text>
+      <TouchableOpacity style={styles.photoButton} onPress={() => Alert.alert("الوجه الأمامي", "اختَر طريقة الإرفاق", [
+        { text: "تصوير بالكاميرا", onPress: () => { void pickPhoto("id", "camera"); } },
+        { text: "اختيار من المعرض", onPress: () => { void pickPhoto("id", "library"); } },
+        { text: "إلغاء", style: "cancel" },
+      ])}>
+        {idPhoto ? <Image source={{ uri: idPhoto.uri }} style={styles.preview} /> : <Text style={styles.photoText}>اضغط لتصوير أو اختيار الوجه الأمامي</Text>}
+      </TouchableOpacity>
+      {documentType === "national_id" && <>
+        <Text style={styles.label}>الجهة الخلفية للبطاقة الوطنية *</Text>
+        <TouchableOpacity style={styles.photoButton} onPress={() => Alert.alert("الوجه الخلفي", "اختَر طريقة الإرفاق", [
+          { text: "تصوير بالكاميرا", onPress: () => { void pickPhoto("id-back", "camera"); } },
+          { text: "اختيار من المعرض", onPress: () => { void pickPhoto("id-back", "library"); } },
+          { text: "إلغاء", style: "cancel" },
+        ])}>
+          {idBackPhoto ? <Image source={{ uri: idBackPhoto.uri }} style={styles.preview} /> : <Text style={styles.photoText}>اضغط لتصوير أو اختيار الوجه الخلفي</Text>}
+        </TouchableOpacity>
+      </>}
+
+      <Text style={styles.label}>مستند رسمي للسيارة *</Text>
+      <Text style={styles.note}>أرفق صورة واضحة وكاملة لمستند رسمي يثبت تسجيل السيارة، وتأكد أن بيانات المركبة ورقم اللوحة ظاهرة وواضحة.</Text>
+      <TouchableOpacity style={styles.photoButton} onPress={() => Alert.alert("إرفاق مستند السيارة", "اختَر طريقة إرفاق المستند الرسمي للسيارة", [
+        { text: "تصوير المستند بالكاميرا", onPress: () => { void pickPhoto("vehicle-document", "camera"); } },
+        { text: "اختيار صورة من المعرض", onPress: () => { void pickPhoto("vehicle-document", "library"); } },
+        { text: "إلغاء", style: "cancel" },
+      ])}>
+        {vehicleDocumentPhoto ? <Image source={{ uri: vehicleDocumentPhoto.uri }} style={styles.preview} /> : <Text style={styles.photoText}>اضغط هنا لتصوير المستند الرسمي أو اختياره من المعرض</Text>}
+      </TouchableOpacity>
+
+      <Text style={styles.label}>فيديو السيارة *</Text>
+      <Text style={styles.note}>أرفق فيديو واضحاً للسيارة من الخارج بحيث تظهر السيارة كاملة من الأمام والخلف والجوانب، ويكون رقم اللوحة واضحاً ومقروءاً. مدة الفيديو لا تتجاوز {vehicleVideoMaxDurationSeconds} ثوانٍ.</Text>
+      <View style={styles.photoButton}>
+        <Text style={styles.photoText}>{vehicleVideo ? (vehicleVideo.fileName || "تم اختيار فيديو السيارة") : vehicleVideoPath ? "يوجد فيديو محفوظ مرفق سابقاً ✓" : "لم يتم إرفاق فيديو السيارة بعد"}</Text>
+        <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+          <Button title="تصوير فيديو" onPress={() => { void pickVehicleVideo("camera"); }} />
+          <Button title="اختيار فيديو" onPress={() => { void pickVehicleVideo("library"); }} />
+        </View>
+      </View>
+
+      <View style={{ height: 24 }} />
+      <Button title={vehicleChangeMode ? "إرسال طلب التحديث للإدارة" : "إرسال طلب التسجيل للمراجعة"} onPress={submit} loading={busy} />
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: palette.pageCanvas, paddingHorizontal: 20, paddingTop: 52 },
+  statusContainer: { flex: 1, justifyContent: "center", padding: 24, gap: 18, backgroundColor: palette.pageCanvas },
+  title: { fontSize: 26, fontWeight: "900", color: palette.ink, marginBottom: 12, textAlign: "right" },
+  note: { color: palette.muted, fontSize: 13, lineHeight: 22, textAlign: "right" },
+  rejection: { color: palette.danger, backgroundColor: palette.dangerSoft, padding: 13, borderRadius: radius.md, marginTop: 12, textAlign: "right", lineHeight: 22 },
+  statusText: { color: palette.ink, fontSize: 14, lineHeight: 26, textAlign: "right" },
+  label: { fontSize: 13, fontWeight: "900", color: palette.ink, marginBottom: 8, marginTop: 18, textAlign: "right" },
+  row: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  chip: { paddingHorizontal: 16, paddingVertical: 11, borderRadius: radius.md, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line },
+  category: { flex: 1, minWidth: 90, alignItems: "center", paddingHorizontal: 10, paddingVertical: 14, borderRadius: radius.md, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line },
+  chipActive: { borderColor: palette.gold, backgroundColor: palette.brandSoft },
+  chipText: { fontSize: 13, fontWeight: "800", color: palette.muted, textAlign: "center" },
+  chipTextActive: { color: palette.brand },
+  input: { minHeight: 54, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, paddingHorizontal: 16, paddingVertical: 14, fontSize: 14, color: palette.ink, backgroundColor: palette.surface, textAlign: "right" },
+  photoButton: { minHeight: 112, borderWidth: 1, borderStyle: "dashed", borderColor: palette.gold, borderRadius: radius.lg, backgroundColor: palette.surface, alignItems: "center", justifyContent: "center", padding: 12 },
+  photoText: { color: palette.brand, fontWeight: "900", textAlign: "center" },
+  preview: { width: 150, height: 110, borderRadius: radius.md, resizeMode: "cover" },
+});

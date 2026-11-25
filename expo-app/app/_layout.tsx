@@ -1,0 +1,252 @@
+import "@/lib/background-location";
+import { Stack, router } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import { Text, TextInput, View, useColorScheme } from "react-native";
+import Svg, { Defs, LinearGradient as SvgLinearGradient, RadialGradient, Rect, Stop } from "react-native-svg";
+import { useFonts } from "@expo-google-fonts/tajawal/useFonts";
+import { Tajawal_400Regular } from "@expo-google-fonts/tajawal/400Regular";
+import { Tajawal_500Medium } from "@expo-google-fonts/tajawal/500Medium";
+import { Tajawal_700Bold } from "@expo-google-fonts/tajawal/700Bold";
+import { Tajawal_800ExtraBold } from "@expo-google-fonts/tajawal/800ExtraBold";
+import { Tajawal_900Black } from "@expo-google-fonts/tajawal/900Black";
+import { Alert, AppState, I18nManager, LogBox, Platform } from "react-native";
+import { useEffect, useRef } from "react";
+import Constants from "expo-constants";
+import * as Notifications from "expo-notifications";
+import { AuthProvider, useAuth } from "@/lib/auth-context";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { ThemePreferenceProvider } from "@/lib/theme-preference";
+import { supabase } from "@/lib/supabase";
+import { IncomingRequestModal } from "@/components/incoming-request-modal";
+import { RegionalServiceBanner } from "@/components/regional-service-banner";
+import { NativeBottomNavigation } from "@/components/native-bottom-navigation";
+import { palette } from "@/styles/theme";
+import { loadNotificationPreferences, setNotificationPreferences } from "@/lib/notification-sound";
+import { AppErrorBoundary } from "@/components/app-error-boundary";
+
+I18nManager.forceRTL(true);
+I18nManager.allowRTL(true);
+LogBox.ignoreLogs(["Setting a timer", "AsyncStorage"]);
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => {
+    // Read the persisted preference before deciding foreground sound; the
+    // in-memory default is enabled until SecureStore finishes loading.
+    try {
+      const preferences = await loadNotificationPreferences();
+      return { shouldShowBanner: true, shouldShowList: true, shouldPlaySound: preferences.soundEnabled, shouldSetBadge: true };
+    } catch (error) {
+      console.warn("[notifications] Preference load failed; using defaults:", error);
+      return { shouldShowBanner: true, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: true };
+    }
+  },
+});
+
+async function configureAndroidNotificationChannels() {
+  if (Platform.OS !== "android") return;
+  const common = { importance: Notifications.AndroidImportance.MAX, lightColor: "#D4AF37", enableLights: true };
+  const results = await Promise.allSettled([
+    Notifications.setNotificationChannelAsync("mamnoon_v2_sound_vibrate", { ...common, name: "ممنون - صوت واهتزاز", sound: "default", enableVibrate: true, vibrationPattern: [0, 250, 180, 250, 180, 350] }),
+    Notifications.setNotificationChannelAsync("mamnoon_v2_sound_only", { ...common, name: "ممنون - صوت فقط", sound: "default", enableVibrate: false, vibrationPattern: [] }),
+    Notifications.setNotificationChannelAsync("mamnoon_v2_vibrate_only", { ...common, name: "ممنون - اهتزاز فقط", sound: null, enableVibrate: true, vibrationPattern: [0, 250, 180, 250, 180, 350] }),
+    Notifications.setNotificationChannelAsync("mamnoon_v2_silent", { ...common, name: "ممنون - صامت", sound: null, enableVibrate: false, vibrationPattern: [] }),
+  ]);
+  results.forEach((result, index) => {
+    if (result.status === "rejected") console.warn("[notifications] Channel setup failed:", index, result.reason);
+  });
+}
+
+function PushNotificationSetup() {
+  const { user } = useAuth();
+  const handledResponseId = useRef<string | null>(null);
+  useEffect(() => {
+    void loadNotificationPreferences().then(() => configureAndroidNotificationChannels()).catch((error) => console.warn("[notifications] Could not configure Android channels:", error));
+  }, []);
+  useEffect(() => {
+    if (!user) return;
+    const userId = user.id;
+    let active = true;
+    let registering = false;
+    async function registerPushToken() {
+      if (registering || !active) return;
+      registering = true;
+      try {
+        if (Platform.OS === "android") {
+          await configureAndroidNotificationChannels();
+          await Notifications.setNotificationCategoryAsync("incoming_request", [{ identifier: "accept", buttonTitle: "موافقة", options: { opensAppToForeground: true } }]);
+        }
+        const current = await Notifications.getPermissionsAsync();
+        const permission = current.granted ? current : await Notifications.requestPermissionsAsync();
+        if (!permission.granted || !active) return;
+        const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? (Constants as any).easConfig?.projectId;
+        if (!projectId) { console.warn("[notifications] Expo project ID is missing"); return; }
+        const tokenResult = await Notifications.getExpoPushTokenAsync({ projectId });
+        if (!active) return;
+        const localPreferences = await loadNotificationPreferences();
+        let savedPreference: { sound_enabled?: boolean | null; vibration_enabled?: boolean | null } | null = null;
+        const fullPreferenceResult = await supabase.from("user_push_tokens")
+          .select("sound_enabled,vibration_enabled").eq("user_id", userId).order("updated_at", { ascending: false }).limit(1).maybeSingle();
+        if (!fullPreferenceResult.error) {
+          savedPreference = fullPreferenceResult.data;
+        } else if (fullPreferenceResult.error.code === "42703" || fullPreferenceResult.error.message.toLowerCase().includes("vibration_enabled")) {
+          // Backward compatibility while the isolated vibration migration is awaiting deployment.
+          const legacyPreferenceResult = await supabase.from("user_push_tokens")
+            .select("sound_enabled").eq("user_id", userId).order("updated_at", { ascending: false }).limit(1).maybeSingle();
+          if (legacyPreferenceResult.error) console.warn("[notifications] Could not read sound preference:", legacyPreferenceResult.error.message);
+          savedPreference = legacyPreferenceResult.data;
+        } else {
+          console.warn("[notifications] Could not read notification preferences:", fullPreferenceResult.error.message);
+        }
+        const soundEnabled = typeof savedPreference?.sound_enabled === "boolean" ? savedPreference.sound_enabled : localPreferences.soundEnabled;
+        const vibrationEnabled = typeof savedPreference?.vibration_enabled === "boolean" ? savedPreference.vibration_enabled : localPreferences.vibrationEnabled;
+        await setNotificationPreferences({ soundEnabled, vibrationEnabled });
+        const pushTokenRow = {
+          user_id: userId,
+          expo_push_token: tokenResult.data,
+          device_platform: Platform.OS,
+          sound_enabled: soundEnabled,
+          vibration_enabled: vibrationEnabled,
+          updated_at: new Date().toISOString(),
+        };
+        let saveResult = await supabase.from("user_push_tokens").upsert(pushTokenRow, { onConflict: "user_id,expo_push_token" });
+        if (saveResult.error && (saveResult.error.code === "42703" || saveResult.error.message.toLowerCase().includes("vibration_enabled"))) {
+          saveResult = await supabase.from("user_push_tokens").upsert({ user_id: userId, expo_push_token: tokenResult.data, device_platform: Platform.OS, sound_enabled: soundEnabled, updated_at: new Date().toISOString() }, { onConflict: "user_id,expo_push_token" });
+        }
+        if (saveResult.error) console.warn("[notifications] Could not save push token:", saveResult.error.message);
+      } catch (error) { console.warn("[notifications] Push registration unavailable:", error); }
+      finally { registering = false; }
+    }
+    async function openRequestFromResponse(response: Notifications.NotificationResponse | null) {
+      if (!response) return;
+      try {
+        const responseId = response.notification.request.identifier;
+        if (handledResponseId.current === responseId) return;
+        const data = response.notification.request.content.data as { request_id?: unknown; type?: unknown };
+        handledResponseId.current = responseId;
+        if (typeof data?.request_id === "string" && response.actionIdentifier === "accept") {
+          const { error } = await supabase.rpc("accept_service_request", { _request_id: data.request_id });
+          if (error) Alert.alert("تعذّر قبول الطلب", error.message || "قد يكون العرض انتهى أو قبله مزوّد آخر.");
+          else router.push({ pathname: "/request/[id]", params: { id: data.request_id } });
+        } else if (typeof data?.request_id === "string") router.push({ pathname: "/request/[id]", params: { id: data.request_id } });
+        else if (data?.type === "taxi_high_demand" || data?.type === "company_announcement") router.push("/home");
+        else router.push("/profile");
+      } catch (error) {
+        console.warn("[notifications] Response handling failed:", error);
+        Alert.alert("تعذّر فتح الإشعار", "افتح التطبيق وانتقل إلى الطلب من قائمة الطلبات.");
+      }
+    }
+    let responseSubscription: ReturnType<typeof Notifications.addNotificationResponseReceivedListener> | null = null;
+    try {
+      responseSubscription = Notifications.addNotificationResponseReceivedListener(openRequestFromResponse);
+    } catch (error) {
+      console.warn("[notifications] Response listener unavailable; app startup will continue:", error);
+    }
+    void Promise.resolve()
+      .then(() => Notifications.getLastNotificationResponseAsync())
+      .then((response) => { if (active) return openRequestFromResponse(response); })
+      .catch((error) => console.warn("[notifications] Could not read notification response:", error));
+    void registerPushToken();
+    // Refresh the Expo token and sync per-device preferences whenever Android
+    // returns to foreground (tokens can rotate while the app is not running).
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void registerPushToken();
+    });
+    return () => {
+      active = false;
+      responseSubscription?.remove();
+      appStateSubscription.remove();
+    };
+  }, [user?.id]);
+  return null;
+}
+
+function ApplicationBackdrop() {
+  const dark = useColorScheme() === "dark";
+  return (
+    <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: palette.canvasSolid }}>
+      <Svg width="100%" height="100%" viewBox="0 0 390 844" preserveAspectRatio="none" style={{ position: "absolute", top: 0, left: 0 }}>
+        <Defs>
+          <SvgLinearGradient id="mamnoonFullCanvas" x1="0%" y1="0%" x2="100%" y2="100%">
+            <Stop offset="0%" stopColor={palette.brandSoft} stopOpacity={dark ? 0.65 : 0.9} />
+            <Stop offset="52%" stopColor={palette.canvasSolid} stopOpacity="1" />
+            <Stop offset="100%" stopColor={palette.goldSoft} stopOpacity={dark ? 0.35 : 0.8} />
+          </SvgLinearGradient>
+          <RadialGradient id="mamnoonPrimaryGlow" cx="75%" cy="0%" rx="90%" ry="65%" gradientUnits="objectBoundingBox">
+            <Stop offset="0%" stopColor={palette.brand} stopOpacity={dark ? 0.12 : 0.28} />
+            <Stop offset="55%" stopColor={palette.brand} stopOpacity="0" />
+          </RadialGradient>
+          <RadialGradient id="mamnoonGoldGlow" cx="15%" cy="100%" rx="80%" ry="60%" gradientUnits="objectBoundingBox">
+            <Stop offset="0%" stopColor={palette.gold} stopOpacity={dark ? 0.06 : 0.10} />
+            <Stop offset="50%" stopColor={palette.gold} stopOpacity="0" />
+          </RadialGradient>
+          <RadialGradient id="mamnoonSideGlow" cx="100%" cy="50%" rx="70%" ry="50%" gradientUnits="objectBoundingBox">
+            <Stop offset="0%" stopColor={palette.brandGlow} stopOpacity={0.08} />
+            <Stop offset="45%" stopColor={palette.brandGlow} stopOpacity="0" />
+          </RadialGradient>
+        </Defs>
+        <Rect x="0" y="0" width="390" height="844" fill="url(#mamnoonFullCanvas)" />
+        <Rect x="0" y="0" width="390" height="844" fill="url(#mamnoonPrimaryGlow)" />
+        <Rect x="0" y="0" width="390" height="844" fill="url(#mamnoonGoldGlow)" />
+        {!dark && <Rect x="0" y="0" width="390" height="844" fill="url(#mamnoonSideGlow)" />}
+      </Svg>
+    </View>
+  );
+}
+
+export default function RootLayout() {
+  const colorScheme = useColorScheme();
+  const [fontsLoaded, fontError] = useFonts({ Tajawal_400Regular, Tajawal_500Medium, Tajawal_700Bold, Tajawal_800ExtraBold, Tajawal_900Black });
+  if (!fontsLoaded && !fontError) return null;
+  if (fontsLoaded) {
+    (Text as any).defaultProps = { ...(Text as any).defaultProps, style: [{ fontFamily: "Tajawal_400Regular" }, (Text as any).defaultProps?.style] };
+    (TextInput as any).defaultProps = { ...(TextInput as any).defaultProps, style: [{ fontFamily: "Tajawal_400Regular" }, (TextInput as any).defaultProps?.style] };
+  } else {
+    console.warn("[startup] Tajawal font loading failed; continuing with system fonts:", fontError);
+  }
+  return (
+    <AppErrorBoundary>
+    <SafeAreaProvider>
+    <ThemePreferenceProvider>
+      <AuthProvider>
+        <PushNotificationSetup />
+        <View style={{ flex: 1, backgroundColor: palette.canvasSolid }}>
+          <ApplicationBackdrop />
+          <StatusBar style={colorScheme === "dark" ? "light" : "dark"} backgroundColor={palette.canvasSolid} />
+          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "transparent" }, animation: "slide_from_right" }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="auth" />
+            <Stack.Screen name="auth/callback" />
+            <Stack.Screen name="account-settings" />
+            <Stack.Screen name="partner/dashboard" />
+            <Stack.Screen name="partner/[id]" options={{ presentation: "card", animation: "slide_from_right" }} />
+            <Stack.Screen name="discover/[category]" options={{ presentation: "card", animation: "slide_from_right" }} />
+            <Stack.Screen name="select-role" />
+            <Stack.Screen name="home" />
+            <Stack.Screen name="request/new" />
+            <Stack.Screen name="request/[id]" />
+            <Stack.Screen name="request/chat/[id]" options={{ headerShown: false, presentation: "card", animation: "slide_from_right" }} />
+            <Stack.Screen name="messages" />
+            <Stack.Screen name="support-chat" />
+            <Stack.Screen name="friends" />
+            <Stack.Screen name="history" />
+            <Stack.Screen name="profile" />
+            <Stack.Screen name="admin" />
+            <Stack.Screen name="admin/staff" />
+            <Stack.Screen name="admin/live-map" />
+            <Stack.Screen name="admin/friends" />
+            <Stack.Screen name="admin/notifications" />
+            <Stack.Screen name="onboarding/driver" />
+            <Stack.Screen name="onboarding/worker" />
+            <Stack.Screen name="forgot-password" />
+            <Stack.Screen name="reset-password" />
+          </Stack>
+          <NativeBottomNavigation />
+          <IncomingRequestModal />
+          <RegionalServiceBanner />
+        </View>
+      </AuthProvider>
+    </ThemePreferenceProvider>
+    </SafeAreaProvider>
+    </AppErrorBoundary>
+  );
+}

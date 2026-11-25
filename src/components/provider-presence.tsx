@@ -1,0 +1,57 @@
+import { useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/lib/auth-context";
+
+const SEND_EVERY_MS = 30_000;
+
+/** Shares an available driver/technician's location so nearby ride and service requests can reach them. */
+export function ProviderPresence() {
+  const { session, roles } = useAuth();
+  const uid = session?.user.id;
+  const isDriver = roles.includes("driver") || roles.includes("large_driver");
+  const isWorker = roles.includes("worker");
+  const isProvider = isDriver || isWorker;
+
+  useEffect(() => {
+    if (!uid || !isProvider || typeof navigator === "undefined" || !navigator.geolocation) return;
+    let stopped = false;
+    let last: GeolocationPosition | null = null;
+    let lastSent = 0;
+
+    async function isAvailable() {
+      const [d, w] = await Promise.all([
+        isDriver ? supabase.from("driver_profiles").select("available").eq("user_id", uid!).maybeSingle() : Promise.resolve({ data: null }),
+        isWorker ? supabase.from("worker_profiles").select("available").eq("user_id", uid!).maybeSingle() : Promise.resolve({ data: null }),
+      ]);
+      return !!(d.data as any)?.available || !!(w.data as any)?.available;
+    }
+
+    async function send(force = false) {
+      if (stopped || !last) return;
+      if (!Number.isFinite(last.coords.accuracy) || last.coords.accuracy > 100) return;
+      if (!force && Date.now() - lastSent < SEND_EVERY_MS) return;
+      if (!(await isAvailable())) return;
+      lastSent = Date.now();
+      const speed = last.coords.speed;
+      await (supabase as any).from("provider_presence").upsert({
+        user_id: uid!,
+        lat: last.coords.latitude,
+        lng: last.coords.longitude,
+        heading: last.coords.heading ?? null,
+        updated_at: new Date().toISOString(),
+        accuracy_m: last.coords.accuracy,
+        speed_mps: typeof speed === "number" && Number.isFinite(speed) && speed >= 0 ? speed : null,
+      });
+    }
+
+    const watch = navigator.geolocation.watchPosition(
+      (pos) => { last = pos; void send(); },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 15_000, timeout: 20_000 },
+    );
+    const timer = setInterval(() => void send(true), SEND_EVERY_MS);
+    return () => { stopped = true; navigator.geolocation.clearWatch(watch); clearInterval(timer); };
+  }, [uid, isDriver, isWorker, isProvider]);
+
+  return null;
+}

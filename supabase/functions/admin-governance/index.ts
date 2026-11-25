@@ -1,0 +1,146 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.119.0";
+import { getSupabasePublishableKey, getSupabaseSecretKey, createSupabaseFetch } from "../_shared/api-keys.ts";
+
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Content-Type": "application/json",
+};
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: cors });
+const required = (key: string) => {
+  const value = Deno.env.get(key);
+  if (!value) throw new Error("missing_" + key);
+  return value;
+};
+const uuid = (v: unknown): v is string => typeof v === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+const roles = ["admin", "support", "finance", "moderator"];
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+  let actionForLog = "unknown";
+  try {
+    const url = required("SUPABASE_URL"), anon = getSupabasePublishableKey();
+    const service = getSupabaseSecretKey();
+    const authHeader = req.headers.get("Authorization") || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    if (!token) return json({ error: "unauthorized" }, 401);
+    const caller = createClient(url, anon, {
+      global: { fetch: createSupabaseFetch(anon), headers: { Authorization: "Bearer " + token } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: auth, error: authError } = await caller.auth.getUser(token);
+    if (authError || !auth.user) return json({ error: "unauthorized" }, 401);
+    const { data: staff, error: staffError } = await caller.rpc("has_staff_role", { p_user_id: auth.user.id });
+    if (staffError || staff !== true) return json({ error: "forbidden" }, 403);
+    const admin = createClient(url, service, { global: { fetch: createSupabaseFetch(service) }, auth: { persistSession: false, autoRefreshToken: false } });
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body.action !== "string") return json({ error: "invalid_request" }, 400);
+    actionForLog = body.action;
+    const requireAdmin = async () => {
+      const { data, error } = await caller.rpc("has_admin_access", { p_user_id: auth.user.id });
+      if (error || data !== true) throw new Error("admin_required");
+    };
+    const requirePermission = async (permissionKey: string) => {
+      // Resolve the caller's active scope from the database; never trust a
+      // client-supplied governorate when checking scoped administrative access.
+      const { data: assignment, error: assignmentError } = await admin
+        .from("staff_assignments")
+        .select("scope_type,scope_governorate")
+        .eq("user_id", auth.user.id)
+        .eq("active", true)
+        .maybeSingle();
+      if (assignmentError) throw new Error("permission_scope_lookup_failed");
+      const scopeType = assignment?.scope_type === "governorate" ? "governorate" : "global";
+      const scopeGovernorate = scopeType === "governorate" ? assignment?.scope_governorate ?? null : null;
+      const { data, error } = await caller.rpc("admin_has_permission", {
+        p_permission_key: permissionKey,
+        p_scope_type: scopeType,
+        p_scope_governorate: scopeGovernorate,
+      });
+      if (error || data !== true) throw new Error("permission_required:" + permissionKey);
+    };
+    const requireSuperAdmin = async () => {
+      const { data, error } = await caller.rpc("is_super_admin", { p_user_id: auth.user.id });
+      if (error || data !== true) throw new Error("super_admin_required");
+    };
+
+    if (body.action === "audit_logs") {
+      await requirePermission("audit.read");
+      const limit = Number.isInteger(body.limit) ? Math.max(1, Math.min(200, body.limit)) : 100;
+      const { data, error } = await admin.from("audit_logs")
+        .select("*, admin:profiles!audit_logs_user_id_fkey(full_name,phone)")
+        .order("created_at", { ascending: false }).limit(limit);
+      if (error) return json({ error: "audit_logs_load_failed" }, 500);
+      return json({ logs: data ?? [] });
+    }
+
+    if (body.action === "staff_activity") {
+      await requireSuperAdmin();
+      const limit = Number.isInteger(body.limit) ? Math.max(1, Math.min(200, body.limit)) : 100;
+      const { data: rows, error } = await admin.from("staff_activity_log")
+        .select("*").order("created_at", { ascending: false }).limit(limit);
+      if (error) return json({ error: "staff_activity_load_failed" }, 500);
+      const ids = [...new Set((rows ?? []).flatMap((row: any) => [row.staff_user_id, row.actor_user_id]))];
+      const { data: profiles, error: profilesError } = ids.length
+        ? await admin.from("profiles").select("id,full_name,email").in("id", ids)
+        : { data: [], error: null };
+      if (profilesError) return json({ error: "staff_profiles_load_failed" }, 500);
+      const byId = new Map((profiles ?? []).map((profile: any) => [profile.id, profile]));
+      return json({ rows: (rows ?? []).map((row: any) => ({
+        ...row, staff: byId.get(row.staff_user_id), actor: byId.get(row.actor_user_id),
+      })) });
+    }
+
+    if (body.action === "search_users") {
+      await requireSuperAdmin();
+      const q = typeof body.query === "string" ? body.query.trim().slice(0, 80) : "";
+      if (q.length < 2) return json({ error: "query_too_short" }, 400);
+      const safe = q.replace(/[,%()]/g, " ");
+      const { data, error } = await admin.from("profiles")
+        .select("id,full_name,phone,email").or(`full_name.ilike.%${safe}%,phone.ilike.%${safe}%,email.ilike.%${safe}%`)
+        .order("created_at", { ascending: false }).limit(30);
+      if (error) return json({ error: "user_search_failed" }, 500);
+      return json({ users: data ?? [] });
+    }
+
+    if (body.action === "get_roles") {
+      await requireSuperAdmin();
+      if (!uuid(body.user_id)) return json({ error: "invalid_user_id" }, 400);
+      const { data, error } = await caller.rpc("get_staff_roles", { p_user_id: body.user_id });
+      if (error) return json({ error: error.message }, 400);
+      return json({ roles: data ?? [] });
+    }
+
+    if (body.action === "grant_role" || body.action === "revoke_role") {
+      await requireSuperAdmin();
+      if (!uuid(body.user_id) || typeof body.role !== "string" || !roles.includes(body.role)) {
+        return json({ error: "invalid_role_request" }, 400);
+      }
+      if (body.user_id === auth.user.id && body.role === "admin") {
+        return json({ error: "self_role_change_blocked" }, 400);
+      }
+      const rpcName = body.action === "grant_role" ? "admin_grant_role" : "admin_revoke_role";
+      const { error } = await caller.rpc(rpcName, { p_target_user: body.user_id, p_role: body.role });
+      if (error) return json({ error: error.message }, 400);
+      return json({ ok: true });
+    }
+    return json({ error: "unknown_action" }, 400);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const requestId = crypto.randomUUID();
+    console.error("admin-governance request failed", {
+      requestId,
+      action: actionForLog,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      errorMessage: message.slice(0, 500),
+    });
+    if (message.includes("missing_")) return json({ error: "server_configuration_incomplete", request_id: requestId }, 503);
+    if (message.includes("permission_required:")) return json({ error: "permission_required", request_id: requestId }, 403);
+    if (message.includes("super_admin_required")) return json({ error: "super_admin_required", request_id: requestId }, 403);
+    if (message.includes("admin_required")) return json({ error: "admin_required", request_id: requestId }, 403);
+    return json({ error: "internal_error", request_id: requestId }, 500);
+  }
+});
