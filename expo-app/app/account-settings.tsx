@@ -52,6 +52,7 @@ export default function AccountSettingsScreen() {
   const [partnerMapBusy, setPartnerMapBusy] = useState(false);
   const [partnerApplications, setPartnerApplications] = useState<any[]>([]);
   const [partnerBusy, setPartnerBusy] = useState(false);
+  const [personalRequests, setPersonalRequests] = useState<any[]>([]);
   const providerType = APP_VARIANT === "worker" ? "worker" : APP_VARIANT === "large_driver" ? "large_driver" : "driver";
   const governorateLabels: Record<string,string> = {baghdad:"بغداد",basra:"البصرة",nineveh:"نينوى",erbil:"أربيل",sulaymaniyah:"السليمانية",duhok:"دهوك",kirkuk:"كركوك",najaf:"النجف",karbala:"كربلاء",babil:"بابل",anbar:"الأنبار",diyala:"ديالى",saladin:"صلاح الدين",wasit:"واسط",dhiqar:"ذي قار",maysan:"ميسان",muthanna:"المثنى",qadisiyah:"القادسية"};
 
