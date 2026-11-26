@@ -3,7 +3,7 @@ name: Build Android APK (GitHub Actions)
 
 on:
   push:
-    branches: [feature/app-role-separation]
+    branches: [main, feature/app-role-separation]
     paths:
       - ".github/workflows/build-android-apk.yml"
       - "expo-app/**"
