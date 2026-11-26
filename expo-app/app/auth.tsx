@@ -21,7 +21,7 @@ type AuthSessionTokens = Pick<Session, "access_token" | "refresh_token">;
 type AuthIconName = "user" | "phone" | "mail" | "lock";
 
 export default function AuthScreen() {
-  const [mode, setMode] = useState<Mode>("login");
+  const [mode, setMode] = useState<Mode>("signup");
   const [identifier, setIdentifier] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -64,7 +64,7 @@ export default function AuthScreen() {
           if (metadataError) throw metadataError;
         }
         await refresh();
-        router.replace("/");
+        router.replace("/home");
       } else {
         const id = identifier.trim();
         if (!id) throw new Error("أدخل رقم الهاتف أو البريد الإلكتروني");
@@ -141,9 +141,22 @@ export default function AuthScreen() {
           </View>
 
           <View style={styles.modeSwitch}>
-            <View style={[styles.modeOption, styles.modeOptionActive]}>
-              <Text style={[styles.modeText, styles.modeTextActive]}>تسجيل الدخول</Text>
-            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSignup }}
+              onPress={() => setMode("signup")}
+              style={[styles.modeOption, isSignup && styles.modeOptionActive]}
+            >
+              <Text style={[styles.modeText, isSignup && styles.modeTextActive]}>حساب جديد</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: !isSignup }}
+              onPress={() => setMode("login")}
+              style={[styles.modeOption, !isSignup && styles.modeOptionActive]}
+            >
+              <Text style={[styles.modeText, !isSignup && styles.modeTextActive]}>تسجيل دخول</Text>
+            </Pressable>
           </View>
 
           <View style={styles.form}>
