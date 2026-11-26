@@ -281,6 +281,29 @@ export function IncomingRequestModal() {
     }
   }
 
+  async function acceptLargeVehicleRequest() {
+    if (!offer || !isLargeVehicle || busy) return;
+    if (amount == null) {
+      Alert.alert("لا يمكن القبول حالياً", "الزبون لم يحدد أجرة للطلب. استخدم إرسال عرض السعر.");
+      return;
+    }
+    setBusy("accept");
+    try {
+      const { error } = await supabase.rpc("accept_large_vehicle_request", {
+        _request_id: offer.request_id,
+      });
+      if (error) throw error;
+      setVisible(false);
+      setOffer(null);
+      router.push({ pathname: "/request/[id]", params: { id: offer.request_id } });
+    } catch (error) {
+      Alert.alert("تعذر قبول الطلب", error instanceof Error ? error.message : "حاول مرة ثانية.");
+      await loadOffer();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function respond(action: "accept" | "reject") {
     if (!offer || busy) return;
     setBusy(action);
@@ -420,6 +443,10 @@ export function IncomingRequestModal() {
                 maxLength={500}
                 style={{ borderWidth: 1, borderColor: palette.line, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: palette.ink, textAlign: "right", marginTop: 10 }}
               />
+              <TouchableOpacity style={[styles.action, styles.accept, { marginTop: 10 }]} onPress={() => void acceptLargeVehicleRequest()} disabled={Boolean(busy) || remainingSeconds <= 0 || amount == null}>
+                {busy === "accept" && amount != null ? <ActivityIndicator color="#fff" /> : <Text style={styles.acceptText}>قبول الطلب مباشرة</Text>}
+              </TouchableOpacity>
+              {amount == null ? <Text style={{ color: palette.muted, fontSize: 11, textAlign: "center", marginTop: 6 }}>القبول المباشر يحتاج أجرة محددة من الزبون</Text> : null}
               <TouchableOpacity style={[styles.action, styles.accept, { marginTop: 10 }]} onPress={() => void sendLargeVehicleOffer()} disabled={Boolean(busy) || remainingSeconds <= 0}>
                 {busy === "accept" ? <ActivityIndicator color="#fff" /> : <Text style={styles.acceptText}>إرسال عرض السعر</Text>}
               </TouchableOpacity>
