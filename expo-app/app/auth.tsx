@@ -215,7 +215,7 @@ export default function AuthScreen() {
                     textContentType="oneTimeCode"
                     autoComplete="sms-otp"
                     maxLength={6}
-                    style={[styles.input, styles.otpInput]}
+                    style={styles.otpInput}
                   />
                 </View>
                 <Pressable onPress={() => { setStep("phone"); setOtp(""); }} style={styles.textAction}>
@@ -246,7 +246,7 @@ export default function AuthScreen() {
               <Text style={styles.adminTitle}>دخول الإدارة</Text>
               <Text style={styles.adminDescription}>هذه الواجهة مخصصة لحسابات الإدارة المصرّح بها فقط.</Text>
               <RealInput value={adminEmail} onChangeText={setAdminEmail} placeholder="البريد الإلكتروني" keyboardType="email-address" autoCapitalize="none" autoComplete="email" style={styles.input} />
-              <RealInput value={adminPassword} onChangeText={setAdminPassword} placeholder="كلمة المرور" secureTextEntry autoCapitalize="none" style={[styles.input, styles.adminPassword]} />
+              <RealInput value={adminPassword} onChangeText={setAdminPassword} placeholder="كلمة المرور" secureTextEntry autoCapitalize="none" style={styles.adminPassword} />
               <Button title="دخول لوحة الإدارة" onPress={signInAdmin} loading={adminBusy} style={styles.submit} />
               <Pressable onPress={() => { setAdminVisible(false); setAdminPassword(""); }} style={styles.cancelAdmin}>
                 <Text style={styles.textActionLabel}>إلغاء</Text>
@@ -277,7 +277,7 @@ const styles = StyleSheet.create({
   fieldLabel: { color: palette.ink, fontSize: 14, fontWeight: "800", marginBottom: 10 },
   inputWrap: { position: "relative", justifyContent: "center" },
   input: { minHeight: 62, borderRadius: 12, paddingHorizontal: 16, textAlign: "left", fontSize: 17, borderColor: palette.line, backgroundColor: palette.surfaceSoft },
-  otpInput: { textAlign: "center", letterSpacing: 10, fontSize: 22, fontWeight: "900" },
+  otpInput: { minHeight: 62, borderRadius: 12, paddingHorizontal: 16, textAlign: "center", fontSize: 22, letterSpacing: 10, fontWeight: "900", borderColor: palette.line, backgroundColor: palette.surfaceSoft },
   phoneValue: { color: palette.ink, fontSize: 17, fontWeight: "800", textAlign: "center", paddingVertical: 14, backgroundColor: palette.surfaceSoft, borderRadius: 12 },
   hint: { color: palette.muted, fontSize: 11, fontWeight: "600", marginTop: 8, lineHeight: 18 },
   submit: { width: "100%", minHeight: 56, borderRadius: 12, marginTop: 8 },
@@ -288,6 +288,6 @@ const styles = StyleSheet.create({
   adminCard: { width: "100%", maxWidth: 420, alignSelf: "center", backgroundColor: palette.surface, borderRadius: 18, padding: 22, borderWidth: 1, borderColor: palette.line },
   adminTitle: { color: palette.ink, fontSize: 20, fontWeight: "900", textAlign: "center", marginBottom: 8 },
   adminDescription: { color: palette.muted, fontSize: 12, lineHeight: 20, textAlign: "center", marginBottom: 18 },
-  adminPassword: { marginTop: 12 },
+  adminPassword: { minHeight: 62, borderRadius: 12, paddingHorizontal: 16, textAlign: "left", fontSize: 17, borderColor: palette.line, backgroundColor: palette.surfaceSoft, marginTop: 12 },
   cancelAdmin: { alignSelf: "center", padding: 12 },
 });
