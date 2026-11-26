@@ -64,7 +64,7 @@ export default function HomeScreen() {
   const { user, profile, roles, activeRole, loading: authLoading } = useAuth();
   const selectedRole = activeRole && roles.includes(activeRole)
     ? activeRole
-    : roles.includes("customer") ? "customer" : roles[0] || "customer";
+    : roles.includes(APP_VARIANT) ? APP_VARIANT : roles[0] || APP_VARIANT;
   const { resolved: resolvedTheme, setMode } = useThemePreference();
   const { companyName, logoUrl: companyLogoUrl, welcomeMessage, homeVisualUrl, homeVisualAnimated, homeVisualEnabled, homeVisualWidthPx, homeVisualHeightPx, homeVisualPosition, homeVisualLinkUrl } = useCompanyBranding();
 
