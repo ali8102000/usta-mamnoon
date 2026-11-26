@@ -359,8 +359,8 @@ export default function AccountSettingsScreen() {
         {partnerApplications.some(item=>item.status==="approved" && ["store","restaurant"].includes(item.partner_type)) && <TouchableOpacity activeOpacity={0.85} onPress={()=>router.push("/partner/dashboard")} style={styles.partnerJoinButton}><Text style={styles.partnerJoinButtonText}>إعدادات أعمالي</Text></TouchableOpacity>}
       </View>
       <Text style={styles.note}>كل خيارات الانضمام مجمّعة هنا. بعد إكمال بياناتك ومستنداتك تراجع الإدارة طلبك.</Text>
-    </View
-    )}>
+    </View>
+    )}
     <Text style={styles.note}>أي تغيير ببيانات الدخول لا يعتمد إلا بعد إكمال التحقق.</Text>
     <Text style={styles.label}>البريد الإلكتروني</Text>
     {actualEmail ? <Text style={styles.current} selectable>{actualEmail}</Text> : <Text style={styles.hint}>ماكو بريد إلكتروني حقيقي مسجّل بحسابك. أضف بريدك حتى تستلم رسائل التأكيد واستعادة الحساب.</Text>}
