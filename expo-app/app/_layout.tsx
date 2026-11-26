@@ -1,4 +1,4 @@
-import "@/lib/overlay-background-notifications";
+import { getOverlayPermissionEnabled } from "@/lib/overlay-background-notifications";
 import "@/lib/background-location";
 import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -115,6 +115,7 @@ function PushNotificationSetup() {
           device_platform: Platform.OS,
           sound_enabled: soundEnabled,
           vibration_enabled: vibrationEnabled,
+          overlay_capable: Platform.OS === "android" && getOverlayPermissionEnabled(),
           updated_at: new Date().toISOString(),
         };
         let saveResult = await supabase.from("user_push_tokens").upsert(pushTokenRow, { onConflict: "user_id,expo_push_token" });
