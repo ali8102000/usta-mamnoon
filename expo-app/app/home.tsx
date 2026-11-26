@@ -20,7 +20,6 @@ import {
 } from "react-native";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
-import { APP_VARIANT } from "@/lib/app-variant";
 import * as Location from "expo-location";
 import * as Haptics from "expo-haptics";
 import { getFreshProviderLocation, startProviderPresenceBackgroundLocation, stopProviderPresenceBackgroundLocation } from "@/lib/background-location";
