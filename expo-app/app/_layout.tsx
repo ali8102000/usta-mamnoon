@@ -17,6 +17,7 @@ import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ThemePreferenceProvider } from "@/lib/theme-preference";
 import { supabase } from "@/lib/supabase";
+import { APP_VARIANT } from "@/lib/app-variant";
 import { IncomingRequestModal } from "@/components/incoming-request-modal";
 import { RegionalServiceBanner } from "@/components/regional-service-banner";
 import { NativeBottomNavigation } from "@/components/native-bottom-navigation";
@@ -62,7 +63,7 @@ async function configureAndroidNotificationChannels() {
 }
 
 function PushNotificationSetup() {
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
   const handledResponseId = useRef<string | null>(null);
   useEffect(() => {
     void loadNotificationPreferences().then(() => configureAndroidNotificationChannels()).catch((error) => console.warn("[notifications] Could not configure Android channels:", error));
@@ -126,14 +127,23 @@ function PushNotificationSetup() {
       try {
         const responseId = response.notification.request.identifier;
         if (handledResponseId.current === responseId) return;
-        const data = response.notification.request.content.data as { request_id?: unknown; type?: unknown };
+        const data = response.notification.request.content.data as { request_id?: unknown; type?: unknown; status?: unknown };
         handledResponseId.current = responseId;
         if (typeof data?.request_id === "string" && response.actionIdentifier === "accept") {
           const { error } = await supabase.rpc("accept_service_request", { _request_id: data.request_id });
           if (error) Alert.alert("تعذّر قبول الطلب", error.message || "قد يكون العرض انتهى أو قبله مزوّد آخر.");
           else router.push({ pathname: "/request/[id]", params: { id: data.request_id } });
         } else if (typeof data?.request_id === "string") router.push({ pathname: "/request/[id]", params: { id: data.request_id } });
-        else if (data?.type === "taxi_high_demand" || data?.type === "company_announcement") router.push("/home");
+        else if (data?.type === "provider_approved" || (data?.type === "provider_verification" && data?.status === "approved")) {
+          await refresh();
+          router.replace("/home");
+        } else if (data?.type === "provider_rejected" || (data?.type === "provider_verification" && data?.status === "rejected")) {
+          await refresh();
+          if (APP_VARIANT === "worker") router.replace("/onboarding/worker");
+          else if (APP_VARIANT === "driver" || APP_VARIANT === "large_driver") {
+            router.replace({ pathname: "/onboarding/driver", params: { providerType: APP_VARIANT } });
+          } else router.replace("/profile");
+        } else if (data?.type === "taxi_high_demand" || data?.type === "company_announcement") router.push("/home");
         else router.push("/profile");
       } catch (error) {
         console.warn("[notifications] Response handling failed:", error);
@@ -161,7 +171,7 @@ function PushNotificationSetup() {
       responseSubscription?.remove();
       appStateSubscription.remove();
     };
-  }, [user?.id]);
+  }, [user?.id, refresh]);
   return null;
 }
 

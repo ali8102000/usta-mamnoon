@@ -24,7 +24,7 @@ type PickedImage = { uri: string; mimeType?: string | null; fileName?: string | 
 type PhotoKind = "face" | "id-front" | "id-back";
 
 export default function WorkerOnboarding() {
-  const { user, refresh, setActiveRole } = useAuth();
+  const { user, refresh, setActiveRole, roles } = useAuth();
   const [companyName, setCompanyName] = useState("شركة ممنون");
   const [services, setServices] = useState<WorkerService[]>([]);
   const [servicesLoading, setServicesLoading] = useState(true);
@@ -118,7 +118,7 @@ export default function WorkerOnboarding() {
       console.error("Unable to restore worker approval:", error);
     });
     return () => { active = false; };
-  }, [user?.id]);
+  }, [user?.id, roles]);
 
   useEffect(() => {
     if (!user?.id || !approvedWorkerRole) return;
