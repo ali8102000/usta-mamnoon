@@ -21,7 +21,7 @@ export function OverlayPermissionPrompt() {
   const [visible, setVisible] = useState(false);
   const [skipped, setSkipped] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
-  const visual = visuals[APP_VARIANT];
+  const visual = visuals[APP_VARIANT === "worker" ? "worker" : APP_VARIANT === "large_driver" ? "large_driver" : "driver"];
 
   const refreshPermission = useCallback(() => {
     if (Platform.OS !== "android" || !OverlayNative) return;
