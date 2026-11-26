@@ -41,6 +41,8 @@ TaskManager.defineTask<Notifications.NotificationTaskPayload>(TASK_NAME, async (
   }
 });
 
-void TaskManager.isTaskRegisteredAsync(TASK_NAME)
-  .then((registered) => registered ? null : Notifications.registerTaskAsync(TASK_NAME))
-  .catch((registrationError) => console.warn("[overlay-push] Could not register background task:", registrationError));
+if (Platform.OS === "android") {
+  void TaskManager.isTaskRegisteredAsync(TASK_NAME)
+    .then((registered) => registered ? null : Notifications.registerTaskAsync(TASK_NAME))
+    .catch((registrationError) => console.warn("[overlay-push] Could not register background task:", registrationError));
+}
