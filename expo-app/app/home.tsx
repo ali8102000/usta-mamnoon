@@ -3,8 +3,7 @@ import Constants from "expo-constants";
 import { useRef } from "react";
 import { Animated, Easing, PanResponder } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { router, Redirect } from "expo-router";
-import { APP_VARIANT } from "@/lib/app-variant";
+import { router } from "expo-router";
 import {
   View,
   Text,
@@ -61,14 +60,10 @@ type IncomingRequest = {
 };
 
 export default function HomeScreen() {
-  return APP_VARIANT === "customer" ? <HomeScreenContent /> : <Redirect href="/account-settings" />;
-}
-
-function HomeScreenContent() {
-  const { user, profile, roles } = useAuth();
-  // Each installed app is a separate product. Never fall back to the customer
-  // dashboard when provider roles are still loading or an account is awaiting approval.
-  const selectedRole = APP_VARIANT;
+  const { user, profile, roles, activeRole } = useAuth();
+  const selectedRole = activeRole && roles.includes(activeRole)
+    ? activeRole
+    : roles.includes("customer") ? "customer" : roles[0] || "customer";
   const { resolved: resolvedTheme, setMode } = useThemePreference();
   const { companyName, logoUrl: companyLogoUrl, welcomeMessage, homeVisualUrl, homeVisualAnimated, homeVisualEnabled, homeVisualWidthPx, homeVisualHeightPx, homeVisualPosition, homeVisualLinkUrl } = useCompanyBranding();
 
