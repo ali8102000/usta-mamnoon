@@ -212,7 +212,7 @@ export default function AccountSettingsScreen() {
     setBusy(true);
     try {
       const { error } = await (supabase as any).from("profiles")
-        .update({ full_name: nextName, updated_at: new Date().toISOString() })
+        .update({ full_name: nextName })
         .eq("id", user.id);
       if (error) throw error;
       await refresh();
