@@ -78,6 +78,7 @@ export default function Index() {
   }, [loading, brandingLoaded, splashFinished, nextRoute, session?.user.id, roles]);
 
   if (loading || !brandingLoaded || !splashFinished || !nextRoute) {
+    if (welcomeVisualUrl) return <View style={styles.splash}><StatusBar hidden /><ImageBackground source={{ uri: welcomeVisualUrl }} style={StyleSheet.absoluteFillObject} resizeMode="cover" /></View>;
     return (
       <View style={styles.center}>
         <Animated.View style={{ transform: [{ scale: logoScale }] }}>
@@ -95,6 +96,7 @@ export default function Index() {
 }
 
 const styles = StyleSheet.create({
+  splash: { flex: 1, width: "100%", height: "100%", backgroundColor: "#0900FF" },
   center: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "transparent", padding: 24 },
   logo: { width: 164, height: 164, marginBottom: 14, borderRadius: 24, backgroundColor: "#FFFFFF" },
   brand: { color: "#17324D", fontSize: 27, fontWeight: "900", letterSpacing: 0.1, textAlign: "center", width: "100%", maxWidth: 340, lineHeight: 38, flexShrink: 1 },
