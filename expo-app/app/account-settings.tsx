@@ -52,6 +52,15 @@ export default function AccountSettingsScreen() {
   const [partnerMapBusy, setPartnerMapBusy] = useState(false);
   const [partnerApplications, setPartnerApplications] = useState<any[]>([]);
   const [partnerBusy, setPartnerBusy] = useState(false);
+  const providerType = APP_VARIANT === "worker" ? "worker" : APP_VARIANT === "large_driver" ? "large_driver" : "driver";
+  const [vehicleMake, setVehicleMake] = useState("");
+  const [vehicleModel, setVehicleModel] = useState("");
+  const [vehicleYear, setVehicleYear] = useState("");
+  const [vehiclePlate, setVehiclePlate] = useState("");
+  const [vehicleColor, setVehicleColor] = useState("");
+  const [vehicleBusy, setVehicleBusy] = useState(false);
+  const [vehicleRequests, setVehicleRequests] = useState<any[]>([]);
+  const [vehicleLoadError, setVehicleLoadError] = useState("");
   const governorateLabels: Record<string,string> = {baghdad:"بغداد",basra:"البصرة",nineveh:"نينوى",erbil:"أربيل",sulaymaniyah:"السليمانية",duhok:"دهوك",kirkuk:"كركوك",najaf:"النجف",karbala:"كربلاء",babil:"بابل",anbar:"الأنبار",diyala:"ديالى",saladin:"صلاح الدين",wasit:"واسط",dhiqar:"ذي قار",maysan:"ميسان",muthanna:"المثنى",qadisiyah:"القادسية"};
 
   const isCompanyAdmin = user?.email?.toLowerCase() === "a7md0555666@gmail.com" && roles.includes("super_admin");
@@ -59,6 +68,36 @@ export default function AccountSettingsScreen() {
   useEffect(() => { setEmail(actualEmail); }, [actualEmail]);
   useEffect(() => { if (routeParams.partner === "1") setPartnerFormOpen(true); }, [routeParams.partner]);
   useEffect(() => { if (user?.id) void loadPartnerApplications(); }, [user?.id]);
+  useEffect(() => {
+    if (!user?.id || APP_VARIANT === "customer") return;
+    let active = true;
+    void (async () => {
+      setVehicleLoadError("");
+      const table = providerType === "worker" ? "worker_profiles" : "driver_profiles";
+      const { data, error } = await (supabase as any).from(table)
+        .select("vehicle_make,vehicle_model,vehicle_year,vehicle_plate,vehicle_color")
+        .eq("user_id", user.id).maybeSingle();
+      if (!active) return;
+      if (error) {
+        setVehicleLoadError("تعذر تحميل بيانات المركبة. تأكد من تحديث قاعدة البيانات.");
+      } else if (data) {
+        setVehicleMake(data.vehicle_make ?? "");
+        setVehicleModel(data.vehicle_model ?? "");
+        setVehicleYear(data.vehicle_year == null ? "" : String(data.vehicle_year));
+        setVehiclePlate(data.vehicle_plate ?? "");
+        setVehicleColor(data.vehicle_color ?? "");
+      }
+      const { data: requests, error: requestError } = await (supabase as any).from("provider_change_requests")
+        .select("id,status,rejection_reason,created_at,requested_data")
+        .eq("user_id", user.id).eq("provider_type", providerType)
+        .order("created_at", { ascending: false }).limit(5);
+      if (!active) return;
+      if (!requestError) setVehicleRequests(requests ?? []);
+    })().catch((error) => {
+      if (active) setVehicleLoadError(error instanceof Error ? error.message : "تعذر تحميل بيانات المركبة.");
+    });
+    return () => { active = false; };
+  }, [user?.id, providerType]);
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -224,6 +263,51 @@ export default function AccountSettingsScreen() {
     }
   }
 
+  async function submitVehicleUpdate() {
+    if (!user?.id) { Alert.alert("تعذر الإرسال", "سجّل الدخول من جديد."); return; }
+    const make = vehicleMake.trim();
+    const model = vehicleModel.trim();
+    const year = vehicleYear.trim();
+    const plate = vehiclePlate.trim();
+    const color = vehicleColor.trim();
+    if (make.length < 2 || make.length > 40 || model.length < 1 || model.length > 60) {
+      Alert.alert("بيانات المركبة", "اكتب الماركة والموديل بصورة صحيحة."); return;
+    }
+    if (!/^\\d{4}$/.test(year) || Number(year) < 1900 || Number(year) > new Date().getFullYear() + 1) {
+      Alert.alert("سنة الصنع", "أدخل سنة صنع صحيحة من أربعة أرقام."); return;
+    }
+    if (plate.length < 2 || plate.length > 30 || color.length > 40) {
+      Alert.alert("بيانات المركبة", "تأكد من رقم اللوحة واللون."); return;
+    }
+    if (vehicleRequests.some((item) => item.status === "pending")) {
+      Alert.alert("طلب قيد المراجعة", "عندك طلب تحديث مركبة ينتظر موافقة الإدارة حالياً."); return;
+    }
+    setVehicleBusy(true);
+    try {
+      const vehicle_update = {
+        vehicle_make: make,
+        vehicle_model: model,
+        vehicle_year: Number(year),
+        vehicle_plate: plate,
+        vehicle_color: color || null,
+      };
+      const { error } = providerType === "worker"
+        ? await (supabase as any).rpc("submit_worker_vehicle_change_request", { _vehicle_update: vehicle_update })
+        : await (supabase as any).rpc("submit_provider_change_request", { _provider_type: providerType, _requested_data: { vehicle_update } });
+      if (error) throw error;
+      Alert.alert("تم إرسال الطلب", "وصل تحديث المركبة إلى الإدارة للمراجعة. تبقى بيانات مركبتك الحالية فعالة إلى حين الموافقة.");
+      const { data } = await (supabase as any).from("provider_change_requests")
+        .select("id,status,rejection_reason,created_at,requested_data")
+        .eq("user_id", user.id).eq("provider_type", providerType)
+        .order("created_at", { ascending: false }).limit(5);
+      setVehicleRequests(data ?? []);
+    } catch (error) {
+      Alert.alert("تعذر إرسال التحديث", error instanceof Error ? error.message : "حاول مرة ثانية.");
+    } finally {
+      setVehicleBusy(false);
+    }
+  }
+
   async function saveCompanyName() {
     const next = companyName.trim().replace(/\s+/g, " ");
     if (next.length < 2 || next.length > 60) { Alert.alert("تنبيه", "اسم الشركة لازم يكون بين حرفين و60 حرفاً"); return; }
@@ -300,6 +384,26 @@ export default function AccountSettingsScreen() {
       <Button title={busy ? "جارٍ حفظ المعلومات..." : "حفظ تحديث المعلومات"} onPress={saveProfileInformation} loading={busy} />
       <Text style={styles.hint}>يُحفظ الاسم في ملف حسابك الحقيقي، وتبقى صلاحية التطبيق كما هي.</Text>
     </View>
+    {APP_VARIANT !== "customer" && <View style={styles.nameSection}>
+      <Text style={styles.sectionTitle}>{providerType === "worker" ? "معلومات مركبتي للعمل" : "معلومات مركبتي"}</Text>
+      <Text style={styles.note}>أي تعديل ترسله يروح للإدارة للمراجعة، وما تتغير بيانات المركبة المعتمدة إلا بعد الموافقة.</Text>
+      {!!vehicleLoadError && <Text style={styles.note}>{vehicleLoadError}</Text>}
+      <Text style={styles.label}>ماركة المركبة</Text>
+      <RealInput value={vehicleMake} onChangeText={setVehicleMake} placeholder="مثال: تويوتا أو كيا" maxLength={40} />
+      <Text style={styles.label}>موديل المركبة</Text>
+      <RealInput value={vehicleModel} onChangeText={setVehicleModel} placeholder="مثال: كورولا أو حمل" maxLength={60} />
+      <Text style={styles.label}>سنة الصنع</Text>
+      <RealInput value={vehicleYear} onChangeText={setVehicleYear} placeholder="2022" keyboardType="numeric" maxLength={4} />
+      <Text style={styles.label}>رقم اللوحة</Text>
+      <RealInput value={vehiclePlate} onChangeText={setVehiclePlate} placeholder="رقم لوحة المركبة" maxLength={30} />
+      <Text style={styles.label}>اللون (اختياري)</Text>
+      <RealInput value={vehicleColor} onChangeText={setVehicleColor} placeholder="مثال: أبيض" maxLength={40} />
+      {vehicleRequests.some((item) => item.status === "pending") && <Text style={styles.hint}>طلب تحديث المركبة قيد مراجعة الإدارة حالياً. بياناتك المعتمدة لم تتغير.</Text>}
+      {vehicleRequests.filter((item) => item.status === "rejected").slice(0,1).map((item) => <Text key={item.id} style={styles.note}>آخر طلب مرفوض: {item.rejection_reason || "يرجى مراجعة الإدارة لمعرفة السبب."}</Text>)}
+      {vehicleRequests.filter((item) => item.status === "approved").slice(0,1).map((item) => <Text key={item.id} style={styles.hint}>آخر طلب تحديث تمت الموافقة عليه.</Text>)}
+      <View style={{ height: 12 }} />
+      <Button title={vehicleBusy ? "جارٍ إرسال طلب المراجعة..." : "إرسال تحديث المركبة للمراجعة"} onPress={submitVehicleUpdate} loading={vehicleBusy} />
+    </View>}
     {isCompanyAdmin && <View style={styles.nameSection}>
       <Text style={styles.sectionTitle}>اسم الشركة الظاهر للمستخدمين</Text>
       <Text style={styles.note}>يظهر هذا الاسم في رسائل انتظار الموافقة والتنبيهات بدلاً من اسم الشخص.</Text>
