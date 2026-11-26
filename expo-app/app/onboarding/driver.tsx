@@ -24,7 +24,7 @@ const CATEGORIES = [
 ] as const;
 
 export default function DriverOnboarding() {
-  const { user, profile, refresh, setActiveRole } = useAuth();
+  const { user, profile, refresh, setActiveRole, roles } = useAuth();
   // Accept both the native parameter and the web/deep-link parameter so
   // customer entry points consistently open the large-vehicle registration flow.
   const params = useLocalSearchParams<{ providerType?: string; provider?: string }>();
@@ -156,7 +156,7 @@ export default function DriverOnboarding() {
       setCheckingSavedDriver(false);
     }
     return () => { active = false; };
-  }, [user?.id, providerRole]);
+  }, [user?.id, providerRole, roles]);
 
   useEffect(() => {
     if (!selectedModel && selectedMake && savedModelName && models.length) {
