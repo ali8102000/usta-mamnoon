@@ -8,5 +8,7 @@ android {
   namespace "expo.modules.overlaypermission"
   defaultConfig {
     minSdkVersion 24
+    // Expo's module Gradle plugin expects a non-null Android versionName.
+    versionName "1.0.0"
   }
 }
