@@ -17,6 +17,7 @@ export default function CompanySettingsScreen() {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [logoAsset, setLogoAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [welcomeVisualUrl, setWelcomeVisualUrl] = useState<string | null>(null);
+  const [welcomeVisualTargets, setWelcomeVisualTargets] = useState<string[]>(["customer","worker","driver","large_driver"]);
   const [welcomeVisualAsset, setWelcomeVisualAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [welcomeVisualAnimated, setWelcomeVisualAnimated] = useState(false);
   const [welcomeVisualSizePx, setWelcomeVisualSizePx] = useState(180);
@@ -42,7 +43,7 @@ export default function CompanySettingsScreen() {
       try {
         const [{ data: owner, error: permissionError }, { data, error }] = await Promise.all([
           supabase.rpc("is_super_admin", { p_user_id: user.id }),
-          (supabase as any).from("company_settings").select("company_name,company_logo_url,welcome_message,company_welcome_visual_url,company_welcome_visual_animated,company_welcome_visual_size_px,home_visual_url,home_visual_animated,home_visual_enabled,home_visual_size_px").eq("id",1).maybeSingle(),
+          (supabase as any).from("company_settings").select("company_name,company_logo_url,welcome_message,company_welcome_visual_url,company_welcome_visual_targets,company_welcome_visual_animated,company_welcome_visual_size_px,home_visual_url,home_visual_animated,home_visual_enabled,home_visual_size_px").eq("id",1).maybeSingle(),
         ]);
         if (!active) return;
         setAllowed(!permissionError && owner === true);
@@ -51,6 +52,7 @@ export default function CompanySettingsScreen() {
         setLogoUrl(data?.company_logo_url || branding.logoUrl);
         setWelcome(data?.welcome_message || branding.welcomeMessage);
         setWelcomeVisualUrl(data?.company_welcome_visual_url || branding.welcomeVisualUrl);
+        setWelcomeVisualTargets(Array.isArray(data?.company_welcome_visual_targets) && data.company_welcome_visual_targets.length ? data.company_welcome_visual_targets : ["customer","worker","driver","large_driver"]);
         setWelcomeVisualAnimated(data?.company_welcome_visual_animated === true);
         setWelcomeVisualSizePx(Number.isInteger(data?.company_welcome_visual_size_px) ? Math.max(80, Math.min(320, data.company_welcome_visual_size_px)) : 180);
         setHomeVisualUrl(data?.home_visual_url || null); setHomeVisualAnimated(data?.home_visual_animated !== false); setHomeVisualEnabled(data?.home_visual_enabled !== false); setHomeVisualSizePx(Number.isInteger(data?.home_visual_size_px) ? Math.max(80, Math.min(320, data.home_visual_size_px)) : 180); setHomeVisualWidthPx(Number.isInteger(data?.home_visual_width_px) ? Math.max(80, Math.min(600, data.home_visual_width_px)) : 320); setHomeVisualHeightPx(Number.isInteger(data?.home_visual_height_px) ? Math.max(80, Math.min(600, data.home_visual_height_px)) : 180); setHomeVisualPosition(["above_banner","below_banner","below_custom_content"].includes(data?.home_visual_position) ? data.home_visual_position : "below_banner"); setHomeVisualLinkUrl(data?.home_visual_link_url ?? "");
@@ -135,7 +137,7 @@ export default function CompanySettingsScreen() {
       }
       const { error } = await (supabase as any).from("company_settings").upsert({
         id: 1, company_name: companyName, company_logo_url: nextLogoUrl,
-        welcome_message: message, company_welcome_visual_url: nextWelcomeVisualUrl, company_welcome_visual_animated: welcomeVisualAnimated, company_welcome_visual_size_px: welcomeVisualSizePx, home_visual_url: nextHomeVisualUrl, home_visual_animated: homeVisualAnimated, home_visual_enabled: homeVisualEnabled, home_visual_size_px: homeVisualSizePx, home_visual_width_px: homeVisualWidthPx, home_visual_height_px: homeVisualHeightPx, home_visual_position: homeVisualPosition, home_visual_link_url: homeVisualLinkUrl.trim() || null, updated_by: user.id, updated_at: new Date().toISOString(),
+        welcome_message: message, company_welcome_visual_url: nextWelcomeVisualUrl, company_welcome_visual_targets: welcomeVisualTargets, company_welcome_visual_animated: welcomeVisualAnimated, company_welcome_visual_size_px: welcomeVisualSizePx, home_visual_url: nextHomeVisualUrl, home_visual_animated: homeVisualAnimated, home_visual_enabled: homeVisualEnabled, home_visual_size_px: homeVisualSizePx, home_visual_width_px: homeVisualWidthPx, home_visual_height_px: homeVisualHeightPx, home_visual_position: homeVisualPosition, home_visual_link_url: homeVisualLinkUrl.trim() || null, updated_by: user.id, updated_at: new Date().toISOString(),
       }, { onConflict: "id" });
       if (error) throw error;
       if (welcomeVisualUrl && nextWelcomeVisualUrl !== welcomeVisualUrl) {
@@ -177,6 +179,9 @@ export default function CompanySettingsScreen() {
         <TouchableOpacity onPress={()=>void chooseLogo()} style={s.pickButton}><Text style={s.pickText}>{logoAsset ? "اختيار صورة أخرى" : logoUrl ? "تغيير صورة الشعار" : "اختيار صورة الشعار"}</Text></TouchableOpacity>
         {!!logoAsset && <Text style={s.muted}>الصورة الجديدة محددة وجاهزة للحفظ.</Text>}
         <Text style={s.label}>صورة شاشة بداية التطبيق (تقبل GIF متحرك)</Text>
+        <Text style={s.label}>الفئات التي تظهر لها صورة الافتتاحية</Text>
+        <Text style={s.muted}>حدد فئة واحدة أو أكثر. الصورة تظهر فقط عند فتح التطبيق ولا تتغير أي شاشة بعد الدخول.</Text>
+        {([{value:"customer",label:"تطبيق الزبائن"},{value:"worker",label:"تطبيق الفني"},{value:"driver",label:"تطبيق التكسي"},{value:"large_driver",label:"تطبيق الناقل"}] as const).map(option=><TouchableOpacity key={option.value} onPress={()=>setWelcomeVisualTargets(current=>current.includes(option.value)?current.filter(value=>value!==option.value):[...current,option.value])} style={s.animationToggle}><View style={[s.toggleDot,welcomeVisualTargets.includes(option.value)&&s.toggleDotOn]}/><Text style={s.pickText}>{option.label}</Text></TouchableOpacity>)}
         <TouchableOpacity onPress={()=>void chooseWelcomeVisual()} style={s.pickButton}><Text style={s.pickText}>{welcomeVisualAsset ? "اختيار صورة أخرى" : welcomeVisualUrl ? "تبديل صورة البداية" : "اختيار صورة البداية"}</Text></TouchableOpacity>
         {!!welcomeVisualAsset && <><Text style={s.muted}>الصورة الجديدة محددة وجاهزة للحفظ.</Text><TouchableOpacity onPress={()=>setWelcomeVisualAsset(null)} style={s.removeButton}><Text style={s.removeButtonText}>إلغاء الصورة المختارة</Text></TouchableOpacity></>}
         {!!welcomeVisualUrl && !removeWelcomeVisual && <TouchableOpacity onPress={()=>Alert.alert("حذف صورة البداية","راح تنحذف الصورة من شاشة فتح التطبيق بعد الحفظ. متأكد؟",[{text:"إلغاء",style:"cancel"},{text:"حذف",style:"destructive",onPress:()=>{setWelcomeVisualAsset(null);setRemoveWelcomeVisual(true);}}])} style={s.removeButton}><Text style={s.removeButtonText}>حذف صورة البداية</Text></TouchableOpacity>}
