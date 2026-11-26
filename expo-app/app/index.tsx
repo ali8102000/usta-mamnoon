@@ -103,7 +103,7 @@ export default function Index() {
     );
   }
 
-  return <Redirect href={nextRoute} />;
+  return <Redirect href={session ? "/account-settings" : "/auth"} />;
 }
 
 const styles = StyleSheet.create({
