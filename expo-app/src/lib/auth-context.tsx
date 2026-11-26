@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import * as SecureStore from "expo-secure-store";
+import { AppState } from "react-native";
 import { supabase } from "./supabase";
 import { cleanupSessionAndListeners } from "./session-cleanup";
 import { filterRolesForApp, getInitialRoleForApp, isRoleAllowedInApp } from "./app-variant";
@@ -339,6 +340,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
     return operation;
   }, []);
+
+  // An admin can approve this account while the provider app is in the background.
+  // Refresh the role/profile snapshot when the app returns to the foreground so
+  // newly granted worker/driver roles take effect without requiring sign-out.
+  useEffect(() => {
+    let previousState = AppState.currentState;
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const returnedToForeground = nextState === "active" && previousState !== "active";
+      previousState = nextState;
+      if (returnedToForeground) {
+        void refresh().catch((error) => {
+          console.warn("[auth] Could not refresh account after returning to foreground:", error);
+        });
+      }
+    });
+    return () => subscription.remove();
+  }, [refresh]);
 
   useEffect(() => {
     let active = true;
