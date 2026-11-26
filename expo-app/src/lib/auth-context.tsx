@@ -242,12 +242,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (index >= 0) mappedRoles.splice(index, 1);
       }
 
-      const driverApproved = !driverResult.error && driverResult.data?.status === "approved";
-      const workerApproved = !workerResult.error && workerResult.data?.status === "approved";
+      const driverApproved = !rolesResult.error && !driverResult.error && driverResult.data?.status === "approved";
+      const workerApproved = !rolesResult.error && !workerResult.error && workerResult.data?.status === "approved";
 
       if (driverApproved && driverResult.data) {
-        const driverRole: AppRole = driverResult.data.vehicle_category === "large" ? "large_driver" : "driver";
-        if (!mappedRoles.includes(driverRole)) mappedRoles.push(driverRole);
+        const category = String(driverResult.data.vehicle_category);
+        const driverRole: AppRole | null = category === "large" ? "large_driver"
+          : ["economy", "premium", "luxury"].includes(category) ? "driver" : null;
+        if (driverRole && !mappedRoles.includes(driverRole)) mappedRoles.push(driverRole);
       }
       if (workerApproved && !mappedRoles.includes("worker")) {
         mappedRoles.push("worker");
