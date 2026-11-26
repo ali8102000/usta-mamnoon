@@ -15,9 +15,10 @@ import { useThemePreference, type ThemeMode } from "@/lib/theme-preference";
 import { loadNotificationPreferences, setNotificationPreferences } from "@/lib/notification-sound";
 import Svg, { Path } from "react-native-svg";
 import { safeNavigate } from "@/lib/safe-navigation";
+import { APP_VARIANT } from "@/lib/app-variant";
 
 export default function AccountSettingsScreen() {
-  const { user, profile, roles, refresh, activeRole, setActiveRole } = useAuth();
+  const { user, profile, roles, refresh } = useAuth();
   const routeParams = useLocalSearchParams<{partner?: string}>();
   const { mode, setMode } = useThemePreference();
   const actualEmail = (() => { const candidate = String(user?.email ?? "").trim().toLowerCase(); return candidate && !/^phone\d+@mamnoon\.app$/.test(candidate) ? candidate : ""; })();
@@ -26,7 +27,6 @@ export default function AccountSettingsScreen() {
   const [otp, setOtp] = useState("");
   const [phonePending, setPhonePending] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [switchingRole, setSwitchingRole] = useState<string | null>(null);
   const [notificationSound, setNotificationSound] = useState(true);
   const [notificationVibration, setNotificationVibration] = useState(true);
   const [notificationPrefsBusy, setNotificationPrefsBusy] = useState(false);
@@ -201,71 +201,6 @@ export default function AccountSettingsScreen() {
       .then(({ data }: any) => { if (data?.company_name) setCompanyName(data.company_name); });
   }, [isCompanyAdmin]);
 
-  async function switchRole(role: string) {
-    if (switchingRole) return;
-    if (!user?.id || !roles.includes(role as (typeof roles)[number])) {
-      Alert.alert("تعذر تبديل الدور", "تأكد من تسجيل الدخول وامتلاكك لهذا الدور.");
-      return;
-    }
-
-    setSwitchingRole(role);
-    try {
-      const { data: before, error: beforeError } = await supabase.auth.getSession();
-      if (beforeError) throw beforeError;
-      if (!before.session || before.session.user.id !== user.id) {
-        throw new Error("انتهت جلسة الدخول. سجّل الدخول من جديد قبل تبديل الدور.");
-      }
-
-      const nextRole = role as (typeof roles)[number];
-      const providerTableForRole = (value: string | null) =>
-        value === "driver" || value === "large_driver"
-          ? "driver_profiles"
-          : value === "worker"
-            ? "worker_profiles"
-            : null;
-      const nextProviderTable = providerTableForRole(nextRole);
-      // A user can have more than one provider profile. Deactivate every
-      // provider category except the one being entered, so stale availability
-      // cannot keep receiving dispatches after switching to customer/another role.
-      for (const providerTable of ["driver_profiles", "worker_profiles"]) {
-        if (providerTable === nextProviderTable) continue;
-        const { error: availabilityError } = await (supabase as any)
-          .from(providerTable)
-          .update({ available: false })
-          .eq("user_id", user.id);
-        if (availabilityError) {
-          throw new Error("تعذر إيقاف استقبال الطلبات للدور السابق. لم نبدّل الدور حتى لا تبقى تستقبل طلبات وأنت بوضع الزبون.");
-        }
-      }
-
-      await setActiveRole(nextRole);
-
-      // Role switching changes only the local role preference; it must never
-      // sign out or replace the authenticated Supabase session.
-      const { data: after, error: afterError } = await supabase.auth.getSession();
-      if (afterError) throw afterError;
-      if (!after.session || after.session.user.id !== user.id) {
-        throw new Error("جلسة الحساب تغيّرت أثناء التبديل. لم نكمل الانتقال حفاظاً على حسابك.");
-      }
-
-      safeNavigate("/home", "replace");
-    } catch (error) {
-      Alert.alert("تعذر تبديل الدور", error instanceof Error ? error.message : "حدث خطأ غير متوقع. حاول مرة ثانية.");
-    } finally {
-      setSwitchingRole(null);
-    }
-  }
-
-  function startRegistration(role: "driver" | "large_driver" | "worker") {
-    if (role === "large_driver") {
-      router.push({ pathname: "/onboarding/driver", params: { providerType: "large_driver" } });
-    } else if (role === "driver") {
-      router.push("/onboarding/driver");
-    } else {
-      router.push("/onboarding/worker");
-    }
-  }
-
   async function saveCompanyName() {
     const next = companyName.trim().replace(/\s+/g, " ");
     if (next.length < 2 || next.length > 60) { Alert.alert("تنبيه", "اسم الشركة لازم يكون بين حرفين و60 حرفاً"); return; }
@@ -368,62 +303,16 @@ export default function AccountSettingsScreen() {
       </View>
       {notificationPrefsBusy && <Text style={styles.notificationPrefsHint}>جارٍ حفظ الإعدادات...</Text>}
     </View>
-    {roles.filter((role) => ["customer", "worker", "driver", "large_driver"].includes(role)).length > 1 && <>
-      <View style={styles.roleSectionHeading}>
-        <View style={styles.roleSwitchIcon}>
-          <Svg width={25} height={25} viewBox="0 0 24 24">
-            <Path d="M7 7h9a3 3 0 0 1 3 3v1m0 0-3-3m3 3 3-3M17 17H8a3 3 0 0 1-3-3v-1m0 0 3 3m-3-3-3 3" stroke="#FFFFFF" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
-          </Svg>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.roleSectionTitle}>تبديل الدور</Text>
-          <Text style={styles.roleSectionHint}>بدّل بين الأدوار المرتبطة بحسابك</Text>
-        </View>
-      </View>
-      <View style={styles.roleGrid}>
-        {["customer", "worker", "driver", "large_driver"].filter((role) => roles.includes(role as any)).map((role) => {
-          const selected = role === "customer"
-            ? { title: "الزبون", mark: "ز", backgroundColor: palette.goldSoft, color: palette.brand }
-            : role === "worker"
-              ? { title: "الفني", mark: "ف", backgroundColor: palette.brandSoft, color: palette.brand }
-              : role === "large_driver"
-                ? { title: "سيارات كبيرة", mark: "ك", backgroundColor: palette.goldSoft, color: palette.gold }
-                : { title: "كابتن تكسي", mark: "س", backgroundColor: palette.brandSoft, color: palette.brand };
-          return (
-            <TouchableOpacity key={role} disabled={switchingRole !== null} activeOpacity={0.82} style={[styles.roleCard, { backgroundColor: selected.backgroundColor, opacity: switchingRole && switchingRole !== role ? 0.55 : 1 }, activeRole === role && styles.roleCardActive]} onPress={() => switchRole(role)}>
-              <View style={styles.roleMark}><Text style={styles.roleEmoji}>{selected.mark}</Text></View>
-              <Text style={[styles.roleTitle, { color: selected.color }]}>{selected.title}</Text>
-              <Text style={[styles.roleHint, { color: selected.color }]}>{switchingRole === role ? "جاري التبديل..." : activeRole === role ? "المساحة الحالية" : "التبديل إلى هذا الدور"}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-    </>}
+    {APP_VARIANT === "customer" && (
     <View style={styles.joinSection}>
       <View style={styles.roleSectionHeading}>
         <View style={[styles.roleSwitchIcon, { backgroundColor: palette.gold }]}>
           <Text style={{ color: palette.brandDeep, fontSize: 22, fontWeight: "900" }}>م</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.roleSectionTitle}>سجّل معنا</Text>
-          <Text style={styles.roleSectionHint}>حسابك يبدأ كزبون، واختار مجال العمل إذا تحب تنضم إلينا</Text>
+          <Text style={styles.roleSectionTitle}>الشركاء</Text>
+          <Text style={styles.roleSectionHint}>انضم إلى شبكة شركاء ممنون من الفنادق والمطاعم والمحلات والمولات</Text>
         </View>
-      </View>
-      <View style={styles.registrationList}>
-        {([
-          { key: "driver", title: "كابتن تكسي", detail: "بيانات السيارة والهوية", mark: "س" },
-          { key: "large_driver", title: "سائق سيارات كبيرة", detail: "كيا حمل أو كيا ركاب أو باص", mark: "ك" },
-          { key: "worker", title: "فني أو مقدم خدمة", detail: "اختيار المهن والاختصاصات وتوثيق الهوية", mark: "ف" },
-        ] as const).map((item) => (
-          <TouchableOpacity key={item.key} activeOpacity={0.82} style={styles.registrationCard} onPress={() => startRegistration(item.key)}>
-            <View style={styles.registrationMark}><Text style={styles.registrationMarkText}>{item.mark}</Text></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.registrationTitle}>{item.title}</Text>
-              <Text style={styles.registrationHint}>{item.detail}</Text>
-            </View>
-            <Text style={styles.registrationAction}>{roles.includes(item.key as any) ? "متابعة / تحديث" : "ابدأ التسجيل"}</Text>
-          </TouchableOpacity>
-        ))}
       </View>
       <View style={styles.partnerJoinBox}>
         <Text style={styles.partnerJoinTitle}>انضم كشريك</Text>
@@ -470,7 +359,8 @@ export default function AccountSettingsScreen() {
         {partnerApplications.some(item=>item.status==="approved" && ["store","restaurant"].includes(item.partner_type)) && <TouchableOpacity activeOpacity={0.85} onPress={()=>router.push("/partner/dashboard")} style={styles.partnerJoinButton}><Text style={styles.partnerJoinButtonText}>إعدادات أعمالي</Text></TouchableOpacity>}
       </View>
       <Text style={styles.note}>كل خيارات الانضمام مجمّعة هنا. بعد إكمال بياناتك ومستنداتك تراجع الإدارة طلبك.</Text>
-    </View>
+    </View
+    )}>
     <Text style={styles.note}>أي تغيير ببيانات الدخول لا يعتمد إلا بعد إكمال التحقق.</Text>
     <Text style={styles.label}>البريد الإلكتروني</Text>
     {actualEmail ? <Text style={styles.current} selectable>{actualEmail}</Text> : <Text style={styles.hint}>ماكو بريد إلكتروني حقيقي مسجّل بحسابك. أضف بريدك حتى تستلم رسائل التأكيد واستعادة الحساب.</Text>}
