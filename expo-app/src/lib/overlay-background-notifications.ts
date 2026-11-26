@@ -12,6 +12,11 @@ type OverlayNativeModule = {
 };
 const OverlayNative = Platform.OS === "android" ? requireNativeModule<OverlayNativeModule>("MamnoonOverlayPermission") : null;
 
+export function getOverlayPermissionEnabled(): boolean {
+  try { return Platform.OS === "android" && OverlayNative?.isPermissionGranted() === true; }
+  catch { return false; }
+}
+
 TaskManager.defineTask<Notifications.NotificationTaskPayload>(TASK_NAME, async ({ data, error }) => {
   if (Platform.OS !== "android" || !OverlayNative || error || !data) return;
   try {
@@ -23,15 +28,26 @@ TaskManager.defineTask<Notifications.NotificationTaskPayload>(TASK_NAME, async (
       sound_enabled?: boolean; vibration_enabled?: boolean;
     };
     if (payload.type !== "provider_request_overlay" || typeof payload.request_id !== "string") return;
-    if (!OverlayNative.isPermissionGranted()) return;
+    const title = payload.overlay_title || "طلب جديد من ممنون";
+    const body = payload.overlay_body || "وصلك طلب جديد. اضغط قبول للرد فوراً.";
+    const soundEnabled = payload.sound_enabled !== false;
+    const vibrationEnabled = payload.vibration_enabled !== false;
+    if (!OverlayNative.isPermissionGranted()) {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title, body, sound: soundEnabled ? "default" : false,
+          vibrate: vibrationEnabled ? [0, 320, 160, 320, 160, 420] : [],
+          data: { type: "request_offer", request_id: payload.request_id },
+        },
+        trigger: null,
+      });
+      return;
+    }
     const scheme = Constants.expoConfig?.scheme;
     if (!scheme) return;
     OverlayNative.showRequestOverlay(
-      payload.overlay_title || "طلب جديد من ممنون",
-      payload.overlay_body || "وصلك طلب جديد. اضغط قبول للرد فوراً.",
-      `${scheme}://request/${payload.request_id}?accept=1`,
-      payload.sound_enabled !== false,
-      payload.vibration_enabled !== false
+      title, body, `${scheme}://request/${payload.request_id}?accept=1`,
+      soundEnabled, vibrationEnabled
     );
   } catch (taskError) {
     console.warn("[overlay-push] Background request overlay failed:", taskError);
