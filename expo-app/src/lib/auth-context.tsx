@@ -4,7 +4,7 @@ import * as SecureStore from "expo-secure-store";
 import { AppState } from "react-native";
 import { supabase } from "./supabase";
 import { cleanupSessionAndListeners } from "./session-cleanup";
-import { filterRolesForApp, getInitialRoleForApp, isRoleAllowedInApp } from "./app-variant";
+import { APP_VARIANT, filterRolesForApp, getInitialRoleForApp, isRoleAllowedInApp } from "./app-variant";
 
 export type AppRole =
   | "customer"
@@ -195,12 +195,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Restore the last known non-privileged session immediately while fresh
     // profile/role data is fetched in parallel in the background.
     if (cached && lastUserId.current === uid) {
+      // Provider access is never restored from an offline cache: approval must
+      // be revalidated against the server before a provider app can open its home.
+      const cachedRoles = APP_VARIANT === "customer"
+        ? cached.roles
+        : cached.roles.filter((role) => role !== "driver" && role !== "large_driver" && role !== "worker");
       setProfile(cached.profile);
-      setRoles(filterRolesForApp(cached.roles) as AppRole[]);
-      await withStartupTimeout(restoreActiveRole(uid, cached.roles), 5000, "cached_role_restore_timeout").catch((error) => {
+      setRoles(filterRolesForApp(cachedRoles) as AppRole[]);
+      await withStartupTimeout(restoreActiveRole(uid, cachedRoles), 5000, "cached_role_restore_timeout").catch((error) => {
         console.warn("[startup] Cached role restore timed out; retaining cached profile:", error);
       });
-      const requiresFreshPrivilegeCheck = cached.roles.some((role) =>
+      const requiresFreshPrivilegeCheck = APP_VARIANT !== "customer" || cached.roles.some((role) =>
         role === "admin" || role === "super_admin" || role === "support" ||
         role === "finance" || role === "moderator"
       );
@@ -214,8 +219,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .eq("id", uid)
           .maybeSingle(),
         supabase.from("user_roles").select("role").eq("user_id", uid),
-        supabase.from("driver_profiles").select("user_id,vehicle_category").eq("user_id", uid).maybeSingle(),
-        supabase.from("worker_profiles").select("user_id").eq("user_id", uid).maybeSingle(),
+        supabase.from("driver_profiles").select("user_id,vehicle_category,status").eq("user_id", uid).maybeSingle(),
+        supabase.from("worker_profiles").select("user_id,status").eq("user_id", uid).maybeSingle(),
       ]), 12000, "account_bootstrap_timeout");
 
       // Ignore stale lookups when a different account signed in while these
@@ -229,25 +234,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ? [...(cached?.roles ?? [])]
         : (rolesResult.data ?? []).map((row) => row.role as AppRole);
 
-      // Preserve provider roles from the last successful online read if only
-      // the provider-profile lookup is unavailable while the device is offline.
-      if (driverResult.error) {
-        for (const role of cached?.roles ?? []) {
-          if ((role === "driver" || role === "large_driver") && !mappedRoles.includes(role)) {
-            mappedRoles.push(role);
-          }
-        }
-      } else if (driverResult.data?.vehicle_category === "large") {
-        if (!mappedRoles.includes("large_driver")) mappedRoles.push("large_driver");
-      } else if (driverResult.data && !mappedRoles.includes("driver")) {
-        mappedRoles.push("driver");
+      // A provider profile is not an active application role until the
+      // administrator-approved status is confirmed by the live database.
+      // Fail closed when the status lookup is unavailable.
+      for (const role of ["driver", "large_driver", "worker"] as AppRole[]) {
+        const index = mappedRoles.indexOf(role);
+        if (index >= 0) mappedRoles.splice(index, 1);
       }
 
-      if (workerResult.error) {
-        if (cached?.roles.includes("worker") && !mappedRoles.includes("worker")) {
-          mappedRoles.push("worker");
-        }
-      } else if (workerResult.data && !mappedRoles.includes("worker")) {
+      const driverApproved = !driverResult.error && driverResult.data?.status === "approved";
+      const workerApproved = !workerResult.error && workerResult.data?.status === "approved";
+
+      if (driverApproved && driverResult.data) {
+        const driverRole: AppRole = driverResult.data.vehicle_category === "large" ? "large_driver" : "driver";
+        if (!mappedRoles.includes(driverRole)) mappedRoles.push(driverRole);
+      }
+      if (workerApproved && !mappedRoles.includes("worker")) {
         mappedRoles.push("worker");
       }
 
@@ -276,7 +278,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (lastUserId.current !== uid) return;
       console.warn("[offline] Account lookup failed; using the last saved account snapshot.", error);
       setProfile(cached?.profile ?? null);
-      const fallbackRoles: AppRole[] = cached?.roles?.length ? cached.roles : ["customer"];
+      const fallbackRoles: AppRole[] = cached?.roles?.length
+        ? (APP_VARIANT === "customer" ? cached.roles : cached.roles.filter((role) => role !== "driver" && role !== "large_driver" && role !== "worker"))
+        : ["customer"];
       setRoles(filterRolesForApp(fallbackRoles) as AppRole[]);
       await withStartupTimeout(restoreActiveRole(uid, fallbackRoles), 5000, "active_role_fallback_timeout").catch((roleError) => {
         console.warn("[startup] Could not restore the active role; using customer fallback:", roleError);
