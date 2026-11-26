@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { router } from "expo-router";
 import {
   View, Text, StyleSheet, ScrollView, Alert, Pressable, Image,
-  KeyboardAvoidingView, Platform, Modal, ActivityIndicator,
+  KeyboardAvoidingView, Platform, Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
