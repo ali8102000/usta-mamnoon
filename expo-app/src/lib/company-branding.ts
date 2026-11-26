@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { APP_VARIANT } from "@/lib/app-variant";
 
 export type CompanyBranding = {
   companyName: string;
@@ -55,7 +56,7 @@ export function useCompanyBranding() {
         companyName: data.company_name || DEFAULT_BRANDING.companyName,
         logoUrl: data.company_logo_url || null,
         welcomeMessage: data.welcome_message || DEFAULT_BRANDING.welcomeMessage,
-        welcomeVisualUrl: data.company_welcome_visual_url || null,
+        welcomeVisualUrl: (Array.isArray(data.company_welcome_visual_targets) ? data.company_welcome_visual_targets : ["customer","worker","driver","large_driver"]).includes(APP_VARIANT) ? data.company_welcome_visual_url || null : null,
         welcomeVisualAnimated: data.company_welcome_visual_animated === true,
         welcomeVisualSizePx: Number.isInteger(data.company_welcome_visual_size_px) ? Math.max(80, Math.min(320, data.company_welcome_visual_size_px)) : 180,
         homeVisualUrl: data.home_visual_url || null,
@@ -71,7 +72,7 @@ export function useCompanyBranding() {
     };
     void (supabase as any)
       .from("company_settings")
-      .select("company_name,company_logo_url,welcome_message,company_welcome_visual_url,company_welcome_visual_animated,company_welcome_visual_size_px,home_visual_url,home_visual_animated,home_visual_enabled,home_visual_size_px,home_visual_width_px,home_visual_height_px,home_visual_position,home_visual_link_url")
+      .select("company_name,company_logo_url,welcome_message,company_welcome_visual_url,company_welcome_visual_targets,company_welcome_visual_animated,company_welcome_visual_size_px,home_visual_url,home_visual_animated,home_visual_enabled,home_visual_size_px,home_visual_width_px,home_visual_height_px,home_visual_position,home_visual_link_url")
       .eq("id", 1)
       .maybeSingle()
       .then(({ data, error }: any) => {
