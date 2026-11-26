@@ -7,7 +7,8 @@ import mamnoonLogo from "../assets/mamnoon-logo.png";
 import { useCompanyBranding } from "@/lib/company-branding";
 import { APP_VARIANT } from "@/lib/app-variant";
 import { useEffect, useRef, useState } from "react";
-import { AccessibilityInfo, View, ActivityIndicator, Image, Text, StyleSheet, Animated, Easing } from "react-native";
+import { AccessibilityInfo, View, ActivityIndicator, Image, ImageBackground, Text, StyleSheet, Animated, Easing } from "react-native";
+import { StatusBar } from "expo-status-bar";
 
 export default function Index() {
   const { loading, session, roles } = useAuth();
