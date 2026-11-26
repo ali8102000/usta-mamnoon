@@ -24,6 +24,7 @@ import { NativeBottomNavigation } from "@/components/native-bottom-navigation";
 import { palette } from "@/styles/theme";
 import { loadNotificationPreferences, setNotificationPreferences } from "@/lib/notification-sound";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
+import { OverlayPermissionPrompt } from "@/components/overlay-permission-prompt";
 
 I18nManager.forceRTL(true);
 I18nManager.allowRTL(true);
@@ -241,6 +242,7 @@ export default function RootLayout() {
       <AuthProvider>
         <PushNotificationSetup />
         <ProviderApprovalGate />
+        <OverlayPermissionPrompt />
         <View style={{ flex: 1, backgroundColor: palette.canvasSolid }}>
           <ApplicationBackdrop />
           <StatusBar style={colorScheme === "dark" ? "light" : "dark"} backgroundColor={palette.canvasSolid} />
