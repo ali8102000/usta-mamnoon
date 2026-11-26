@@ -1,3 +1,4 @@
+import { getOverlayPermissionEnabled } from "@/lib/overlay-background-notifications";
 import "@/lib/background-location";
 import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -25,6 +26,7 @@ import { palette } from "@/styles/theme";
 import { loadNotificationPreferences, setNotificationPreferences } from "@/lib/notification-sound";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { OverlayPermissionPrompt } from "@/components/overlay-permission-prompt";
+import { OverlayAcceptLinkHandler } from "@/components/overlay-accept-link-handler";
 
 I18nManager.forceRTL(true);
 I18nManager.allowRTL(true);
@@ -113,6 +115,7 @@ function PushNotificationSetup() {
           device_platform: Platform.OS,
           sound_enabled: soundEnabled,
           vibration_enabled: vibrationEnabled,
+          overlay_capable: Platform.OS === "android" && getOverlayPermissionEnabled(),
           updated_at: new Date().toISOString(),
         };
         let saveResult = await supabase.from("user_push_tokens").upsert(pushTokenRow, { onConflict: "user_id,expo_push_token" });
@@ -260,6 +263,7 @@ export default function RootLayout() {
           <IncomingRequestModal />
           <RegionalServiceBanner />
           <OverlayPermissionPrompt />
+          <OverlayAcceptLinkHandler />
         </View>
       </AuthProvider>
     </ThemePreferenceProvider>
