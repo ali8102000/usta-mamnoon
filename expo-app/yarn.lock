@@ -5338,3 +5338,6 @@ zustand@^4.5.0:
   integrity sha512-CHOUy7mu3lbD6o6LJLfllpjkzhHXSBlX8B9+qPddUsIfeF5S/UZ5q0kmCsnRqT1UHFQZchNFDDzMbQsuesHWlw==
   dependencies:
     use-sync-external-store "^1.2.2"
+"mamnoon-overlay-permission@file:./modules/mamnoon-overlay-permission":
+  version "1.0.0"
+
