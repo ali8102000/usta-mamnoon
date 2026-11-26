@@ -7,6 +7,7 @@ import { requireNativeModule } from "expo-modules-core";
 const TASK_NAME = "MAMNOON_PROVIDER_REQUEST_OVERLAY";
 
 type OverlayNativeModule = {
+  isPermissionGranted(): boolean;
   showRequestOverlay(title: string, body: string, deepLink: string): boolean;
   hideRequestOverlay(): boolean;
 };
