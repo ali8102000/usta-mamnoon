@@ -23,6 +23,7 @@ export default function AccountSettingsScreen() {
   const { mode, setMode } = useThemePreference();
   const actualEmail = (() => { const candidate = String(user?.email ?? "").trim().toLowerCase(); return candidate && !/^phone\d+@mamnoon\.app$/.test(candidate) ? candidate : ""; })();
   const [email, setEmail] = useState(actualEmail);
+  const [fullName, setFullName] = useState(profile?.full_name ?? "");
   const [phone, setPhone] = useState(profile?.phone ?? "");
   const [otp, setOtp] = useState("");
   const [phonePending, setPhonePending] = useState(false);
@@ -201,6 +202,28 @@ export default function AccountSettingsScreen() {
       .then(({ data }: any) => { if (data?.company_name) setCompanyName(data.company_name); });
   }, [isCompanyAdmin]);
 
+  async function saveProfileInformation() {
+    const nextName = fullName.trim().replace(/\\s+/g, " ");
+    if (!user?.id) { Alert.alert("تعذر الحفظ", "سجّل الدخول من جديد."); return; }
+    if (nextName.length < 2 || nextName.length > 80) {
+      Alert.alert("اسم غير صحيح", "اكتب الاسم الكامل بين حرفين و80 حرفاً.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } = await (supabase as any).from("profiles")
+        .update({ full_name: nextName, updated_at: new Date().toISOString() })
+        .eq("id", user.id);
+      if (error) throw error;
+      await refresh();
+      Alert.alert("تم التحديث", "تم حفظ اسمك الجديد في حسابك بنجاح.");
+    } catch (error) {
+      Alert.alert("تعذر تحديث المعلومات", error instanceof Error ? error.message : "حاول مرة ثانية.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveCompanyName() {
     const next = companyName.trim().replace(/\s+/g, " ");
     if (next.length < 2 || next.length > 60) { Alert.alert("تنبيه", "اسم الشركة لازم يكون بين حرفين و60 حرفاً"); return; }
@@ -268,7 +291,15 @@ export default function AccountSettingsScreen() {
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
     <Text style={styles.kicker}>MAMNOON · ACCOUNT</Text>
     <Text style={styles.title}>إعدادات حسابك</Text>
-    <Text style={styles.subtitle}>إدارة أدوارك وبيانات التواصل بأمان</Text>
+    <Text style={styles.subtitle}>إدارة معلومات حسابك وإعدادات التطبيق بأمان</Text>
+    <View style={styles.nameSection}>
+      <Text style={styles.sectionTitle}>معلوماتي الشخصية</Text>
+      <Text style={styles.label}>الاسم الكامل</Text>
+      <RealInput value={fullName} onChangeText={setFullName} placeholder="اكتب اسمك الكامل" autoCapitalize="words" />
+      <View style={{ height: 12 }} />
+      <Button title={busy ? "جارٍ حفظ المعلومات..." : "حفظ تحديث المعلومات"} onPress={saveProfileInformation} loading={busy} />
+      <Text style={styles.hint}>يُحفظ الاسم في ملف حسابك الحقيقي، وتبقى صلاحية التطبيق كما هي.</Text>
+    </View>
     {isCompanyAdmin && <View style={styles.nameSection}>
       <Text style={styles.sectionTitle}>اسم الشركة الظاهر للمستخدمين</Text>
       <Text style={styles.note}>يظهر هذا الاسم في رسائل انتظار الموافقة والتنبيهات بدلاً من اسم الشخص.</Text>
