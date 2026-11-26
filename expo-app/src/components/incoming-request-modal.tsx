@@ -94,7 +94,7 @@ export function IncomingRequestModal() {
   // A linked provider role must stay dormant while the user is in customer mode.
   const canReceive = activeRole === "driver" || activeRole === "large_driver" || activeRole === "worker";
   const [offer, setOffer] = useState<Offer | null>(null);
-  const [busy, setBusy] = useState<"accept" | "reject" | null>(null);
+  const [busy, setBusy] = useState<"accept" | "reject" | "quote" | null>(null);
   const [visible, setVisible] = useState(false);
   const [largeOfferPrice, setLargeOfferPrice] = useState("");
   const [largeOfferMessage, setLargeOfferMessage] = useState("");
@@ -261,7 +261,7 @@ export function IncomingRequestModal() {
       Alert.alert("السعر غير صحيح", "اكتب سعراً أكبر من صفر، وسيُقرّب تلقائياً لأقرب 250 دينار ضمن حد 50000.");
       return;
     }
-    setBusy("accept");
+    setBusy("quote");
     try {
       const { error } = await supabase.rpc("submit_large_vehicle_offer", {
         _request_id: offer.request_id,
@@ -448,7 +448,7 @@ export function IncomingRequestModal() {
               </TouchableOpacity>
               {amount == null ? <Text style={{ color: palette.muted, fontSize: 11, textAlign: "center", marginTop: 6 }}>القبول المباشر يحتاج أجرة محددة من الزبون</Text> : null}
               <TouchableOpacity style={[styles.action, styles.accept, { marginTop: 10 }]} onPress={() => void sendLargeVehicleOffer()} disabled={Boolean(busy) || remainingSeconds <= 0}>
-                {busy === "accept" ? <ActivityIndicator color="#fff" /> : <Text style={styles.acceptText}>إرسال عرض السعر</Text>}
+                {busy === "quote" ? <ActivityIndicator color="#fff" /> : <Text style={styles.acceptText}>إرسال عرض السعر</Text>}
               </TouchableOpacity>
               <TouchableOpacity style={[styles.action, styles.reject, { marginTop: 8 }]} onPress={() => void respond("reject")} disabled={Boolean(busy)}>
                 <Text style={styles.rejectText}>تجاهل الطلب</Text>
