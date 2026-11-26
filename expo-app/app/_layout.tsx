@@ -24,6 +24,7 @@ import { NativeBottomNavigation } from "@/components/native-bottom-navigation";
 import { palette } from "@/styles/theme";
 import { loadNotificationPreferences, setNotificationPreferences } from "@/lib/notification-sound";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
+import { OverlayPermissionPrompt } from "@/components/overlay-permission-prompt";
 
 I18nManager.forceRTL(true);
 I18nManager.allowRTL(true);
@@ -258,6 +259,7 @@ export default function RootLayout() {
           <NativeBottomNavigation />
           <IncomingRequestModal />
           <RegionalServiceBanner />
+          <OverlayPermissionPrompt />
         </View>
       </AuthProvider>
     </ThemePreferenceProvider>
