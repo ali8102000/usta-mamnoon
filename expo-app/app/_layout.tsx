@@ -1,5 +1,5 @@
 import "@/lib/background-location";
-import { Stack, router } from "expo-router";
+import { Stack, router, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Text, TextInput, View, useColorScheme } from "react-native";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, RadialGradient, Rect, Stop } from "react-native-svg";
@@ -164,7 +164,7 @@ function PushNotificationSetup() {
     // Refresh the Expo token and sync per-device preferences whenever Android
     // returns to foreground (tokens can rotate while the app is not running).
     const appStateSubscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void registerPushToken();
+      if (state === "active") { void registerPushToken(); void refresh(); }
     });
     return () => {
       active = false;
@@ -172,6 +172,22 @@ function PushNotificationSetup() {
       appStateSubscription.remove();
     };
   }, [user?.id, refresh]);
+  return null;
+}
+
+function ProviderApprovalGate() {
+  const { user, roles, loading } = useAuth();
+  const pathname = usePathname();
+  useEffect(() => {
+    if (loading || !user || APP_VARIANT === "customer") return;
+    const privileged = roles.some((role) => ["admin", "super_admin", "support", "finance", "moderator"].includes(role));
+    if (privileged || roles.includes(APP_VARIANT)) return;
+    const allowedRoutes = ["/", "/index", "/auth", "/auth/callback", "/select-governorate", "/forgot-password", "/reset-password", "/onboarding/worker", "/onboarding/driver", "/support-chat"];
+    if (allowedRoutes.some((route) => pathname === route || pathname.startsWith(route + "/"))) return;
+    if (APP_VARIANT === "worker") router.replace("/onboarding/worker");
+    else if (APP_VARIANT === "large_driver") router.replace({ pathname: "/onboarding/driver", params: { providerType: "large_driver" } });
+    else router.replace({ pathname: "/onboarding/driver", params: { providerType: "driver" } });
+  }, [loading, user?.id, roles, pathname]);
   return null;
 }
 
@@ -224,6 +240,7 @@ export default function RootLayout() {
     <ThemePreferenceProvider>
       <AuthProvider>
         <PushNotificationSetup />
+        <ProviderApprovalGate />
         <View style={{ flex: 1, backgroundColor: palette.canvasSolid }}>
           <ApplicationBackdrop />
           <StatusBar style={colorScheme === "dark" ? "light" : "dark"} backgroundColor={palette.canvasSolid} />
