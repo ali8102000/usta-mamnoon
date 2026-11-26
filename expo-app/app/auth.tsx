@@ -1,15 +1,13 @@
-import { useState, type ReactNode } from "react";
-import type { Session } from "@supabase/supabase-js";
+import { useEffect, useRef, useState } from "react";
 import { router } from "expo-router";
 import {
   View, Text, StyleSheet, ScrollView, Alert, Pressable, Image,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, Modal, ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import Svg, { Circle, Path, Rect } from "react-native-svg";
-import { authProxy, supabase } from "@/lib/supabase";
-import { isValidPhone, normalizePhone, phoneToEmail } from "@/lib/phone";
+import { supabase } from "@/lib/supabase";
+import { normalizePhone, isValidPhone, toEnglishDigits } from "@/lib/phone";
 import { useAuth } from "@/lib/auth-context";
 import { Button, RealInput } from "@/components/ui";
 import { palette, space } from "@/styles/theme";
@@ -17,370 +15,279 @@ import { Image as ExpoImage } from "expo-image";
 import { useCompanyBranding } from "@/lib/company-branding";
 import { APP_VARIANT } from "@/lib/app-variant";
 
-type Mode = "signup" | "login";
-type AuthSessionTokens = Pick<Session, "access_token" | "refresh_token">;
-type AuthIconName = "user" | "phone" | "mail" | "lock";
+type AuthStep = "phone" | "otp";
 
 export default function AuthScreen() {
-  const [mode, setMode] = useState<Mode>("signup");
-  const [identifier, setIdentifier] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [name, setName] = useState("");
-  const [password, setPassword] = useState("");
+  const [step, setStep] = useState<AuthStep>("phone");
+  const [phoneInput, setPhoneInput] = useState("");
+  const [otp, setOtp] = useState("");
   const [busy, setBusy] = useState(false);
+  const [adminVisible, setAdminVisible] = useState(false);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminBusy, setAdminBusy] = useState(false);
+  const tapCount = useRef(0);
+  const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { refresh } = useAuth();
   const { companyName, logoUrl, welcomeMessage, welcomeVisualUrl, welcomeVisualAnimated } = useCompanyBranding();
 
-  async function onSubmit() {
+  useEffect(() => () => {
+    if (tapTimer.current) clearTimeout(tapTimer.current);
+  }, []);
+
+  function handleLogoTap() {
+    if (APP_VARIANT !== "customer") return;
+    tapCount.current += 1;
+    if (tapTimer.current) clearTimeout(tapTimer.current);
+    if (tapCount.current >= 15) {
+      tapCount.current = 0;
+      tapTimer.current = null;
+      setAdminVisible(true);
+      return;
+    }
+    tapTimer.current = setTimeout(() => {
+      tapCount.current = 0;
+      tapTimer.current = null;
+    }, 5000);
+  }
+
+  async function sendOtp() {
     if (busy) return;
-    if (password.length < 6) {
-      Alert.alert("تحقق من كلمة المرور", "كلمة المرور يجب أن تكون 6 أحرف على الأقل");
+    const normalized = normalizePhone(phoneInput);
+    if (!isValidPhone(normalized)) {
+      Alert.alert("رقم الهاتف غير صحيح", "أدخل رقم هاتف عراقي يبدأ بـ 07 ويتكوّن من 11 رقماً.");
       return;
     }
     setBusy(true);
     try {
-      if (mode === "signup") {
-        if (name.trim().length < 2) throw new Error("الرجاء إدخال الاسم الكامل");
-        if (!isValidPhone(phone)) throw new Error("رقم الهاتف غير صالح");
-        const normalized = normalizePhone(phone);
-        const contactEmail = email.trim().toLowerCase();
-        if (contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
-          throw new Error("البريد الإلكتروني غير صالح");
-        }
-        const result = await authProxy<{ session: AuthSessionTokens | null }>("/signup", {
-          email: contactEmail || phoneToEmail(normalized),
-          password,
-          phone: normalized,
-          full_name: name.trim(),
-          contact_email: contactEmail || null,
-        });
-        if (!result.session) throw new Error("تعذّر إكمال التسجيل. حاول مرة أخرى.");
-        const { error } = await supabase.auth.setSession(result.session);
-        if (error) throw error;
-        if (contactEmail) {
-          const { error: metadataError } = await supabase.auth.updateUser({
-            data: { contact_email: contactEmail },
-          });
-          if (metadataError) throw metadataError;
-        }
-        await refresh();
-        if (APP_VARIANT === "worker") router.replace("/onboarding/worker");
-        else if (APP_VARIANT === "driver") router.replace({ pathname: "/onboarding/driver", params: { providerType: "driver" } });
-        else if (APP_VARIANT === "large_driver") router.replace({ pathname: "/onboarding/driver", params: { providerType: "large_driver" } });
-        else router.replace("/home");
-      } else {
-        const id = identifier.trim();
-        if (!id) throw new Error("أدخل رقم الهاتف أو البريد الإلكتروني");
-        const isEmail = id.includes("@");
-        let payload: { phone: string; password: string } | { email: string; password: string };
-        if (isEmail) {
-          const normalizedEmail = id.toLowerCase();
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
-            throw new Error("البريد الإلكتروني غير صالح");
-          }
-          payload = { email: normalizedEmail, password };
-        } else {
-          if (!isValidPhone(id)) throw new Error("رقم الهاتف غير صالح");
-          payload = { phone: normalizePhone(id), password };
-        }
-        const result = await authProxy<{ session: AuthSessionTokens | null }>("/login", payload);
-        if (!result.session) throw new Error("تعذر إنشاء جلسة تسجيل الدخول");
-        const { data: sessionData, error } = await supabase.auth.setSession(result.session);
-        if (error) throw error;
-        const userId = sessionData.session?.user.id;
-        const roleRowsPromise = userId
-          ? supabase.from("user_roles").select("role").eq("user_id", userId)
-          : Promise.resolve({ data: [] as { role: string }[] });
-        // Load the bootstrap role and the remaining account profile at the same time.
-        const [roleResult] = await Promise.all([roleRowsPromise, refresh()]);
-        if (roleResult.data?.some((row) => row.role === "super_admin")) {
-          router.replace("/admin/bootstrap");
-        } else {
-          router.replace("/");
-        }
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "حدث خطأ";
-      if (/Failed to fetch|NetworkError/i.test(msg)) {
-        Alert.alert("الاتصال غير متاح", "تحقق من اتصال الإنترنت وحاول مرة ثانية.");
-      } else if (/already registered|User already/i.test(msg)) {
-        Alert.alert("الحساب موجود", "هذا الحساب مسجّل مسبقاً. أدخل كلمة المرور لتسجيل الدخول.");
-        setIdentifier(phone || email);
-        setMode("login");
-      } else if (/Invalid login|Invalid credentials/i.test(msg)) {
-        Alert.alert("تعذر الدخول", "بيانات الدخول غير صحيحة.");
-      } else {
-        Alert.alert("تعذر إكمال العملية", msg);
-      }
+      const { error } = await supabase.auth.signInWithOtp({
+        phone: normalized,
+        options: { shouldCreateUser: true, data: { phone: normalized } },
+      });
+      if (error) throw error;
+      setPhoneInput(normalized);
+      setStep("otp");
+      Alert.alert("تم إرسال الرمز", "أرسلنا رمز التحقق إلى رقم هاتفك.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "تعذّر إرسال رمز التحقق.";
+      Alert.alert("تعذّر إرسال الرمز", /sms|phone provider|not configured/i.test(message)
+        ? "خدمة الرسائل النصية غير مهيأة في إعدادات Supabase. حاول لاحقاً أو تواصل مع الدعم."
+        : message);
     } finally {
       setBusy(false);
     }
   }
 
-  const isSignup = mode === "signup";
+  async function verifyOtp() {
+    if (busy) return;
+    const normalized = normalizePhone(phoneInput);
+    const code = toEnglishDigits(otp).replace(/\D/g, "");
+    if (!isValidPhone(normalized)) {
+      setStep("phone");
+      Alert.alert("رقم الهاتف غير صحيح", "أعد إدخال رقم هاتف عراقي صحيح.");
+      return;
+    }
+    if (!/^\d{6}$/.test(code)) {
+      Alert.alert("رمز غير مكتمل", "أدخل رمز التحقق المكوّن من 6 أرقام.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        phone: normalized,
+        token: code,
+        type: "sms",
+      });
+      if (error) throw error;
+      const userId = data.user?.id ?? data.session?.user.id;
+      if (!userId) throw new Error("تم التحقق لكن تعذّر تحميل الحساب. حاول تسجيل الدخول مرة أخرى.");
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id,full_name")
+        .eq("id", userId)
+        .maybeSingle();
+      if (profileError) throw profileError;
+
+      await refresh();
+      if (!profile || !String(profile.full_name ?? "").trim()) {
+        router.replace("/complete-profile");
+      } else {
+        router.replace("/");
+      }
+    } catch (error) {
+      Alert.alert("فشل التحقق", error instanceof Error ? error.message : "رمز التحقق غير صحيح أو منتهي الصلاحية.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function signInAdmin() {
+    if (adminBusy) return;
+    const email = adminEmail.trim().toLowerCase();
+    if (!email || !adminPassword) {
+      Alert.alert("بيانات ناقصة", "أدخل بريد الإدارة وكلمة المرور.");
+      return;
+    }
+    setAdminBusy(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password: adminPassword });
+      if (error) throw error;
+      const userId = data.user?.id;
+      if (!userId) throw new Error("تعذّر تحديد حساب الإدارة.");
+
+      const { data: adminRole, error: roleError } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId)
+        .eq("role", "admin")
+        .maybeSingle();
+
+      if (roleError || !adminRole) {
+        await supabase.auth.signOut();
+        throw new Error("هذا الحساب لا يملك صلاحية الإدارة. تم تسجيل الخروج.");
+      }
+
+      await refresh();
+      setAdminVisible(false);
+      setAdminPassword("");
+      router.replace("/admin");
+    } catch (error) {
+      Alert.alert("تعذّر دخول الإدارة", error instanceof Error ? error.message : "بيانات الدخول غير صحيحة.");
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  const brandMark = logoUrl
+    ? <Image source={{ uri: logoUrl }} style={styles.companyLogo} resizeMode="contain" />
+    : <LinearGradient colors={[palette.brand, palette.brandGlow]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.brandMark}><Text style={styles.brandLetter}>م</Text></LinearGradient>;
 
   return (
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <ScrollView
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={styles.brandTop}>
             {welcomeVisualUrl ? <ExpoImage source={{ uri: welcomeVisualUrl }} style={styles.companyWelcomeVisual} contentFit="contain" autoplay={welcomeVisualAnimated} /> : null}
-            {logoUrl ? (
-              <Image source={{ uri: logoUrl }} style={styles.companyLogo} resizeMode="contain" />
-            ) : (
-              <LinearGradient colors={[palette.brand, palette.brandGlow]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.brandMark}>
-                <Text style={styles.brandLetter}>م</Text>
-              </LinearGradient>
-            )}
+            <Pressable onPress={handleLogoTap} accessibilityRole="image" accessibilityLabel="شعار ممنون">
+              {brandMark}
+            </Pressable>
             <Text style={styles.brandName}>{companyName}</Text>
             <Text style={styles.brandCaption}>{welcomeMessage}</Text>
           </View>
 
-          <View style={styles.modeSwitch}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ selected: isSignup }}
-              onPress={() => setMode("signup")}
-              style={[styles.modeOption, isSignup && styles.modeOptionActive]}
-            >
-              <Text style={[styles.modeText, isSignup && styles.modeTextActive]}>حساب جديد</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ selected: !isSignup }}
-              onPress={() => setMode("login")}
-              style={[styles.modeOption, !isSignup && styles.modeOptionActive]}
-            >
-              <Text style={[styles.modeText, !isSignup && styles.modeTextActive]}>تسجيل دخول</Text>
-            </Pressable>
-          </View>
-
           <View style={styles.form}>
-            {isSignup ? (
-              <>
-                <AuthField title="الاسم الكامل" icon="user">
+            <Text style={styles.heading}>{step === "phone" ? "تسجيل الدخول برقم الهاتف" : "تأكيد رقم الهاتف"}</Text>
+            <Text style={styles.description}>{step === "phone"
+              ? "أدخل رقم هاتفك العراقي وسنرسل لك رمز تحقق برسالة نصية."
+              : "أدخل رمز التحقق الذي وصل برسالة نصية إلى رقمك."}</Text>
+
+            {step === "phone" ? (
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>رقم الهاتف العراقي</Text>
+                <View style={styles.inputWrap}>
                   <RealInput
-                    value={name}
-                    onChangeText={setName}
-                    placeholder="مثال: أحمد محمد"
-                    autoCapitalize="words"
-                    textContentType="name"
-                    maxLength={100}
-                    style={styles.inputRtl}
-                  />
-                </AuthField>
-                <AuthField title="رقم الهاتف" icon="phone">
-                  <RealInput
-                    value={phone}
-                    onChangeText={setPhone}
+                    value={phoneInput}
+                    onChangeText={(value) => setPhoneInput(toEnglishDigits(value))}
                     placeholder="07XXXXXXXXX"
                     keyboardType="phone-pad"
                     textContentType="telephoneNumber"
-                    maxLength={30}
-                    style={styles.inputLtr}
+                    autoComplete="tel"
+                    maxLength={18}
+                    style={styles.input}
                   />
-                </AuthField>
-                <AuthField title="البريد الإلكتروني" hint="اختياري" icon="mail">
-                  <RealInput
-                    value={email}
-                    onChangeText={setEmail}
-                    placeholder="you@example.com"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    textContentType="emailAddress"
-                    maxLength={255}
-                    style={styles.inputLtr}
-                  />
-                </AuthField>
-              </>
+                </View>
+                <Text style={styles.hint}>سيُحوّل الرقم تلقائياً إلى الصيغة الدولية ‎+964 عند الإرسال</Text>
+              </View>
             ) : (
-              <AuthField title="رقم الهاتف أو البريد" icon="phone">
-                <RealInput
-                  value={identifier}
-                  onChangeText={setIdentifier}
-                  placeholder="07XXXXXXXXX أو البريد"
-                  keyboardType="default"
-                  autoCapitalize="none"
-                  autoComplete="username"
-                  style={styles.inputLtr}
-                />
-              </AuthField>
-            )}
-
-            <AuthField title="كلمة المرور" icon="lock">
-              <RealInput
-                value={password}
-                onChangeText={setPassword}
-                placeholder="••••••"
-                secureTextEntry
-                autoCapitalize="none"
-                textContentType={isSignup ? "newPassword" : "password"}
-                returnKeyType="done"
-                onSubmitEditing={onSubmit}
-                maxLength={128}
-                style={styles.inputLtr}
-              />
-            </AuthField>
-
-            {!isSignup && (
-              <Pressable onPress={() => router.push("/forgot-password")} style={styles.forgotButton}>
-                <Text style={styles.forgotText}>نسيت كلمة المرور؟</Text>
-              </Pressable>
+              <>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>رقم الهاتف</Text>
+                  <Text style={styles.phoneValue}>{normalizePhone(phoneInput)}</Text>
+                </View>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>رمز التحقق</Text>
+                  <RealInput
+                    value={otp}
+                    onChangeText={(value) => setOtp(toEnglishDigits(value).replace(/\D/g, "").slice(0, 6))}
+                    placeholder="------"
+                    keyboardType="number-pad"
+                    textContentType="oneTimeCode"
+                    autoComplete="sms-otp"
+                    maxLength={6}
+                    style={[styles.input, styles.otpInput]}
+                  />
+                </View>
+                <Pressable onPress={() => { setStep("phone"); setOtp(""); }} style={styles.textAction}>
+                  <Text style={styles.textActionLabel}>تغيير رقم الهاتف</Text>
+                </Pressable>
+              </>
             )}
 
             <Button
-              title={busy ? "جارٍ المتابعة..." : isSignup ? "إنشاء الحساب" : "تسجيل الدخول"}
-              onPress={onSubmit}
+              title={busy ? "جارٍ المتابعة..." : step === "phone" ? "إرسال رمز التحقق" : "تأكيد الرمز والدخول"}
+              onPress={step === "phone" ? sendOtp : verifyOtp}
               loading={busy}
               style={styles.submit}
             />
+            {step === "otp" ? (
+              <Pressable onPress={sendOtp} disabled={busy} style={styles.resend}>
+                <Text style={styles.textActionLabel}>إعادة إرسال الرمز</Text>
+              </Pressable>
+            ) : null}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {APP_VARIANT === "customer" ? (
+        <Modal visible={adminVisible} transparent animationType="fade" onRequestClose={() => setAdminVisible(false)}>
+          <View style={styles.modalBackdrop}>
+            <View style={styles.adminCard}>
+              <Text style={styles.adminTitle}>دخول الإدارة</Text>
+              <Text style={styles.adminDescription}>هذه الواجهة مخصصة لحسابات الإدارة المصرّح بها فقط.</Text>
+              <RealInput value={adminEmail} onChangeText={setAdminEmail} placeholder="البريد الإلكتروني" keyboardType="email-address" autoCapitalize="none" autoComplete="email" style={styles.input} />
+              <RealInput value={adminPassword} onChangeText={setAdminPassword} placeholder="كلمة المرور" secureTextEntry autoCapitalize="none" style={[styles.input, styles.adminPassword]} />
+              <Button title="دخول لوحة الإدارة" onPress={signInAdmin} loading={adminBusy} style={styles.submit} />
+              <Pressable onPress={() => { setAdminVisible(false); setAdminPassword(""); }} style={styles.cancelAdmin}>
+                <Text style={styles.textActionLabel}>إلغاء</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
     </SafeAreaView>
-  );
-}
-
-function AuthField({
-  title,
-  hint,
-  icon,
-  children,
-}: {
-  title: string;
-  hint?: string;
-  icon: AuthIconName;
-  children: ReactNode;
-}) {
-  return (
-    <View style={styles.field}>
-      <View style={styles.labelRow}>
-        <Text style={styles.fieldLabel}>{title}</Text>
-        {!!hint && <Text style={styles.fieldHint}>({hint})</Text>}
-      </View>
-      <View style={styles.inputWrap}>
-        {children}
-        <AuthFieldIcon name={icon} />
-      </View>
-    </View>
-  );
-}
-
-function AuthFieldIcon({ name }: { name: AuthIconName }) {
-  const common = {
-    stroke: palette.muted,
-    strokeWidth: 1.8,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-    fill: "none" as const,
-  };
-  return (
-    <View pointerEvents="none" style={styles.inputIcon}>
-      <Svg width={20} height={20} viewBox="0 0 24 24">
-        {name === "user" ? (
-          <>
-            <Circle {...common} cx="12" cy="8" r="4" />
-            <Path {...common} d="M4.5 21a7.5 7.5 0 0 1 15 0" />
-          </>
-        ) : name === "phone" ? (
-          <Path {...common} d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.4 19.4 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7l.5 2.7a2 2 0 0 1-.6 1.9L7.2 10a16 16 0 0 0 6.8 6.8l1.7-1.8a2 2 0 0 1 1.9-.6l2.7.5a2 2 0 0 1 1.7 2Z" />
-        ) : name === "mail" ? (
-          <>
-            <Rect {...common} x="3" y="5" width="18" height="14" rx="2" />
-            <Path {...common} d="m3 7 9 6 9-6" />
-          </>
-        ) : (
-          <>
-            <Rect {...common} x="4" y="10" width="16" height="11" rx="2" />
-            <Path {...common} d="M8 10V7a4 4 0 0 1 8 0v3" />
-          </>
-        )}
-      </Svg>
-    </View>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.pageCanvas },
   flex: { flex: 1 },
-  content: {
-    flexGrow: 1,
-    width: "100%",
-    maxWidth: 480,
-    alignSelf: "center",
-    paddingHorizontal: space.xl,
-    paddingTop: space.lg,
-    paddingBottom: space.xxl,
-  },
-  welcomeLink: { alignSelf: "flex-start", paddingVertical: 6, marginBottom: 12 },
-  welcomeLinkText: { color: palette.brand, fontSize: 12, fontWeight: "800" },
-  brandTop: { alignItems: "center", paddingBottom: 24 },
+  content: { flexGrow: 1, width: "100%", maxWidth: 480, alignSelf: "center", paddingHorizontal: space.xl, paddingTop: space.lg, paddingBottom: space.xxl },
+  brandTop: { alignItems: "center", paddingBottom: 28 },
   companyWelcomeVisual: { width: "100%", maxWidth: 320, height: 140, marginBottom: 12 },
   companyLogo: { width: 88, height: 88, borderRadius: 24, backgroundColor: "#FFFFFF", marginBottom: 6 },
-  brandMark: {
-    width: 80,
-    height: 80,
-    borderRadius: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: palette.brand,
-    shadowOpacity: 0.2,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 5,
-  },
+  brandMark: { width: 80, height: 80, borderRadius: 24, alignItems: "center", justifyContent: "center", shadowColor: palette.brand, shadowOpacity: 0.2, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, elevation: 5 },
   brandLetter: { color: palette.white, fontSize: 34, fontWeight: "900" },
   brandName: { color: palette.ink, fontSize: 36, fontWeight: "900", marginTop: 12, letterSpacing: -0.5, width: "100%", maxWidth: 320, textAlign: "center", lineHeight: 44, flexShrink: 1 },
   brandCaption: { color: palette.muted, fontSize: 13, fontWeight: "600", marginTop: 7, width: "100%", maxWidth: 320, textAlign: "center", lineHeight: 24, flexShrink: 1 },
-  modeSwitch: {
-    flexDirection: "row",
-    backgroundColor: palette.surfaceSoft,
-    borderRadius: 12,
-    padding: 6,
-    marginBottom: 28,
-    borderWidth: 1,
-    borderColor: palette.line,
-  },
-  modeOption: { flex: 1, minHeight: 48, borderRadius: 9, alignItems: "center", justifyContent: "center" },
-  modeOptionActive: { backgroundColor: palette.brand, elevation: 2 },
-  modeText: { color: palette.muted, fontSize: 14, fontWeight: "800" },
-  modeTextActive: { color: palette.white },
   form: { flex: 1 },
-  field: { marginBottom: 20 },
-  labelRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 10 },
-  fieldLabel: { color: palette.ink, fontSize: 14, fontWeight: "800" },
-  fieldHint: { color: palette.muted, fontSize: 12 },
+  heading: { color: palette.ink, fontSize: 20, fontWeight: "900", textAlign: "center", marginBottom: 8 },
+  description: { color: palette.muted, fontSize: 13, fontWeight: "600", lineHeight: 23, textAlign: "center", marginBottom: 24 },
+  field: { marginBottom: 18 },
+  fieldLabel: { color: palette.ink, fontSize: 14, fontWeight: "800", marginBottom: 10 },
   inputWrap: { position: "relative", justifyContent: "center" },
-  inputIcon: { position: "absolute", left: 14, top: 0, bottom: 0, justifyContent: "center" },
-  inputRtl: {
-    minHeight: 64,
-    borderRadius: 12,
-    paddingLeft: 46,
-    paddingRight: 16,
-    textAlign: "right",
-    fontSize: 16,
-    borderColor: palette.line,
-    backgroundColor: palette.surfaceSoft,
-  },
-  inputLtr: {
-    minHeight: 64,
-    borderRadius: 12,
-    paddingLeft: 46,
-    paddingRight: 16,
-    textAlign: "left",
-    fontSize: 16,
-    borderColor: palette.line,
-    backgroundColor: palette.surfaceSoft,
-  },
-  forgotButton: { alignSelf: "flex-start", paddingVertical: 8, marginTop: -8, marginBottom: 4 },
-  forgotText: { color: palette.brand, fontSize: 12, fontWeight: "800" },
+  input: { minHeight: 62, borderRadius: 12, paddingHorizontal: 16, textAlign: "left", fontSize: 17, borderColor: palette.line, backgroundColor: palette.surfaceSoft },
+  otpInput: { textAlign: "center", letterSpacing: 10, fontSize: 22, fontWeight: "900" },
+  phoneValue: { color: palette.ink, fontSize: 17, fontWeight: "800", textAlign: "center", paddingVertical: 14, backgroundColor: palette.surfaceSoft, borderRadius: 12 },
+  hint: { color: palette.muted, fontSize: 11, fontWeight: "600", marginTop: 8, lineHeight: 18 },
   submit: { width: "100%", minHeight: 56, borderRadius: 12, marginTop: 8 },
+  textAction: { alignSelf: "flex-start", paddingVertical: 8, marginTop: -8, marginBottom: 6 },
+  textActionLabel: { color: palette.brand, fontSize: 13, fontWeight: "800" },
+  resend: { alignSelf: "center", padding: 14 },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "center", padding: 24 },
+  adminCard: { width: "100%", maxWidth: 420, alignSelf: "center", backgroundColor: palette.surface, borderRadius: 18, padding: 22, borderWidth: 1, borderColor: palette.line },
+  adminTitle: { color: palette.ink, fontSize: 20, fontWeight: "900", textAlign: "center", marginBottom: 8 },
+  adminDescription: { color: palette.muted, fontSize: 12, lineHeight: 20, textAlign: "center", marginBottom: 18 },
+  adminPassword: { marginTop: 12 },
+  cancelAdmin: { alignSelf: "center", padding: 12 },
 });
