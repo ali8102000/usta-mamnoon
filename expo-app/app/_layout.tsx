@@ -1,3 +1,4 @@
+import "@/lib/overlay-background-notifications";
 import "@/lib/background-location";
 import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -25,6 +26,7 @@ import { palette } from "@/styles/theme";
 import { loadNotificationPreferences, setNotificationPreferences } from "@/lib/notification-sound";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { OverlayPermissionPrompt } from "@/components/overlay-permission-prompt";
+import { OverlayAcceptLinkHandler } from "@/components/overlay-accept-link-handler";
 
 I18nManager.forceRTL(true);
 I18nManager.allowRTL(true);
@@ -260,6 +262,7 @@ export default function RootLayout() {
           <IncomingRequestModal />
           <RegionalServiceBanner />
           <OverlayPermissionPrompt />
+          <OverlayAcceptLinkHandler />
         </View>
       </AuthProvider>
     </ThemePreferenceProvider>
