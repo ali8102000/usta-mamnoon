@@ -1,0 +1,6 @@
+{
+  "name": "mamnoon-overlay-permission",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local Android overlay permission bridge for Mamnoon provider apps"
+}
