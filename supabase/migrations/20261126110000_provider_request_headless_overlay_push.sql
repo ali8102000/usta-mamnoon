@@ -1,6 +1,8 @@
--- Android provider offers are data-only Expo pushes so the registered headless task
--- can render a TYPE_APPLICATION_OVERLAY card when the app is backgrounded or killed.
--- iOS and all other notifications keep their existing visible notification behavior.
+-- Only Android devices that confirmed the overlay permission receive headless offer pushes.
+-- Older app builds and users who skip/revoke the permission keep normal visible notifications.
+ALTER TABLE public.user_push_tokens
+  ADD COLUMN IF NOT EXISTS overlay_capable boolean NOT NULL DEFAULT false;
+
 CREATE OR REPLACE FUNCTION public.enqueue_notification_push()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $function$
@@ -14,7 +16,7 @@ BEGIN
   INSERT INTO public.push_delivery_outbox(notification_id, request_id, provider_id, expo_push_token, payload)
   SELECT NEW.id, v_request_id, NEW.user_id, t.expo_push_token,
     CASE
-      WHEN v_provider_offer AND lower(coalesce(t.device_platform, '')) = 'android' THEN
+      WHEN v_provider_offer AND lower(coalesce(t.device_platform, '')) = 'android' AND t.overlay_capable THEN
         jsonb_build_object('to', t.expo_push_token, 'priority', 'high', 'ttl', 180,
           'data', jsonb_build_object(
             'type', 'provider_request_overlay', 'notification_type', NEW.type,
