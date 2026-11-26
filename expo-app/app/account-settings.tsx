@@ -320,7 +320,7 @@ export default function AccountSettingsScreen() {
     {APP_VARIANT === "worker" && <View style={styles.nameSection}>
       <Text style={styles.sectionTitle}>مراجعة تحديث بياناتي</Text>
       <Text style={styles.note}>تعديل الاسم يُرسل للإدارة للمراجعة، ويبقى الاسم الحالي معتمداً إلى حين الموافقة.</Text>
-      {personalRequests.filter((item) => item.requested_data?.profile_update).slice(0,3).map((item) => <View key={item.id} style={styles.requestStatus}>
+      {personalRequests.filter((item) => item.requested_data?.profile_update).slice(0,3).map((item) => <View key={item.id} style={styles.note}>
         <Text style={styles.note}>{item.status === "pending" ? "طلبك قيد مراجعة الإدارة" : item.status === "approved" ? "تمت الموافقة على آخر تحديث" : "تم رفض آخر تحديث"}</Text>
         {item.status === "rejected" && <Text style={styles.note}>سبب الرفض: {item.rejection_reason || "يرجى التواصل مع الإدارة"}</Text>}
       </View>)}
