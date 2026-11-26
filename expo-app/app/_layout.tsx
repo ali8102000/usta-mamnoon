@@ -50,6 +50,11 @@ async function configureAndroidNotificationChannels() {
     Notifications.setNotificationChannelAsync("mamnoon_v2_sound_only", { ...common, name: "ممنون - صوت فقط", sound: "default", enableVibrate: false, vibrationPattern: [] }),
     Notifications.setNotificationChannelAsync("mamnoon_v2_vibrate_only", { ...common, name: "ممنون - اهتزاز فقط", sound: null, enableVibrate: true, vibrationPattern: [0, 250, 180, 250, 180, 350] }),
     Notifications.setNotificationChannelAsync("mamnoon_v2_silent", { ...common, name: "ممنون - صامت", sound: null, enableVibrate: false, vibrationPattern: [] }),
+    // Backward-compatible channels used by the database push outbox.
+    Notifications.setNotificationChannelAsync("mamnoon_sound_vibrate", { ...common, name: "ممنون - صوت واهتزاز", sound: "default", enableVibrate: true, vibrationPattern: [0, 250, 180, 250, 180, 350] }),
+    Notifications.setNotificationChannelAsync("mamnoon_sound_only", { ...common, name: "ممنون - صوت فقط", sound: "default", enableVibrate: false, vibrationPattern: [] }),
+    Notifications.setNotificationChannelAsync("mamnoon_vibrate_only", { ...common, name: "ممنون - اهتزاز فقط", sound: null, enableVibrate: true, vibrationPattern: [0, 250, 180, 250, 180, 350] }),
+    Notifications.setNotificationChannelAsync("mamnoon_silent", { ...common, name: "ممنون - صامت", sound: null, enableVibrate: false, vibrationPattern: [] }),
   ]);
   results.forEach((result, index) => {
     if (result.status === "rejected") console.warn("[notifications] Channel setup failed:", index, result.reason);
