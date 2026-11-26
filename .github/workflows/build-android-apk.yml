@@ -1,0 +1,152 @@
+name: Build Android APK (GitHub Actions)
+# Rebuild with the current repository secrets.
+
+on:
+  push:
+    branches: [feature/app-role-separation]
+    paths:
+      - ".github/workflows/build-android-apk.yml"
+      - "expo-app/**"
+      - "config/public-backend.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: Build worker APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: expo-app
+    env:
+      EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY }}
+    steps:
+      - name: Check out app source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: yarn
+          cache-dependency-path: expo-app/yarn.lock
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK components
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Install Yarn and project dependencies
+        run: |
+          npm install --global yarn@1.22.22
+          yarn install --frozen-lockfile
+
+      - name: Verify app identity and Expo configuration
+        run: |
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const config = JSON.parse(fs.readFileSync("app.json", "utf8")).expo;
+          const expected = {
+            package: "com.mamnoon.usta",
+            variant: "worker"
+          };
+          if (config.android?.package !== expected.package) {
+            throw new Error(`Wrong Android package: ${config.android?.package}`);
+          }
+          if (config.extra?.appVariant !== expected.variant) {
+            throw new Error(`Wrong app variant: ${config.extra?.appVariant}`);
+          }
+          console.log(`Verified ${expected.variant}: ${expected.package}`);
+          NODE
+          if [ -z "${EXPO_PUBLIC_GOOGLE_MAPS_API_KEY:-}" ]; then
+            echo "::error::EXPO_PUBLIC_GOOGLE_MAPS_API_KEY repository secret is missing or empty"
+            exit 1
+          fi
+          npx expo config --json > /tmp/expo-config.json
+          node - <<'NODE'
+          const c = require('/tmp/expo-config.json');
+          if (c.android?.package !== 'com.mamnoon.usta') throw new Error('Wrong Android package');
+          if (c.extra?.googleMapsConfigured !== true) throw new Error('Google Maps key was not loaded by app.config.ts');
+          console.log('Expo identity and Maps environment validated (key value hidden)');
+          NODE
+
+      - name: Generate native Android project
+        env:
+          CI: "1"
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Verify Google Maps key in generated Android manifest
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          path = "android/app/src/main/AndroidManifest.xml"
+          root = ET.parse(path).getroot()
+          ns = "{http://schemas.android.com/apk/res/android}"
+          found = False
+          for item in root.findall("application/meta-data"):
+              if item.get(ns + "name") == "com.google.android.geo.API_KEY":
+                  value = item.get(ns + "value", "")
+                  found = bool(value and value.strip())
+                  break
+          if not found:
+              raise SystemExit("Google Maps API key was not written to AndroidManifest.xml")
+          print("Google Maps Android manifest metadata verified (key value hidden)")
+          PY
+
+      - name: Build standalone release APK
+        working-directory: expo-app/android
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Sign APK with Android APK Signature Scheme v2/v3
+        working-directory: expo-app/android
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          test -s "$APK"
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/mamnoon-debug.keystore" \
+            -storepass android -keypass android \
+            -alias mamnoon-debug -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Mamnoon Debug,O=Mamnoon,C=IQ"
+          "$BUILD_TOOLS/zipalign" -f -p 4 "$APK" "$RUNNER_TEMP/app-aligned.apk"
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$RUNNER_TEMP/mamnoon-debug.keystore" \
+            --ks-key-alias mamnoon-debug \
+            --ks-pass pass:android --key-pass pass:android \
+            --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+            --out "$RUNNER_TEMP/app-signed.apk" "$RUNNER_TEMP/app-aligned.apk"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$RUNNER_TEMP/app-signed.apk"
+          "$BUILD_TOOLS/aapt" dump badging "$RUNNER_TEMP/app-signed.apk" | head -n 3
+          mkdir -p app/build/outputs/apk/verified
+          cp "$RUNNER_TEMP/app-signed.apk" app/build/outputs/apk/verified/app-release-standalone.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: usta-mamnoon-standalone-release-apk
+          path: expo-app/android/app/build/outputs/apk/verified/app-release-standalone.apk
+          if-no-files-found: error
+          retention-days: 14

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import Constants from "expo-constants";
 import { useRef } from "react";
 import { Animated, Easing, PanResponder } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -1120,11 +1121,12 @@ function ProviderHome({
   toggleAvailable: () => void;
   incoming: IncomingRequest[];
 }) {
+  const googleMapsConfigured = Boolean(process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY) || Constants.expoConfig?.extra?.googleMapsConfigured === true;
   const insets = useSafeAreaInsets();
   const topOffset = Math.max(insets.top, 28);
   const bottomOffset = Math.max(insets.bottom, 8);
   const mapRef = useRef<MapView | null>(null);
-  const [mapReady, setMapReady] = useState(false);
+  const [mapReady, setMapReady] = useState(!googleMapsConfigured);
   const [followUser, setFollowUser] = useState(true);
   const [currentCoords, setCurrentCoords] = useState<{ latitude: number; longitude: number; heading?: number | null } | null>(null);
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
@@ -1227,6 +1229,7 @@ function ProviderHome({
 
   return (
     <View style={providerMapStyles.screen}>
+      {googleMapsConfigured ? (
       <MapView
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
@@ -1250,6 +1253,11 @@ function ProviderHome({
           />
         ) : null}
       </MapView>
+      ) : (
+        <View style={[StyleSheet.absoluteFill, providerMapStyles.mapFallback]}>
+          <Text style={providerMapStyles.mapFallbackText}>الخريطة غير متاحة حالياً، سيتم تفعيلها بعد إعداد خدمة الخرائط</Text>
+        </View>
+      )}
 
       {!mapReady && (
         <View pointerEvents="none" style={providerMapStyles.mapLoading}>
@@ -1322,14 +1330,14 @@ function ProviderHome({
         </View>
       )}
 
-      <View style={[providerMapStyles.bottomBar, { bottom: Math.max(insets.bottom, 8) + 4 }]}>
+      <View style={[providerMapStyles.bottomBar, { bottom: Math.max(insets.bottom, 8) + 8 }]}>
         <TouchableOpacity onPress={() => router.push("/support-chat")} style={providerMapStyles.footerAction} accessibilityRole="button">
           <Text style={providerMapStyles.footerActionText}>مساعدة</Text>
         </TouchableOpacity>
         <PowerStatusSwitch
           isOnline={isOnline}
-          offlineText={availabilitySaving ? "جارٍ التحديث..." : "غير متصل"}
-          onlineText="متصل"
+          offlineText={availabilitySaving ? "جارٍ التحديث..." : "مغلق"}
+          onlineText="مفتوح"
           activeColor="#0F766E"
           scaleFn={scaleSize}
           disabled={!verified || availabilitySaving || (walletBlocked && !available)}
@@ -1344,6 +1352,8 @@ function ProviderHome({
 }
 const providerMapStyles = StyleSheet.create({
   screen: { flex: 1, width: "100%", backgroundColor: "#E8EEF3" },
+  mapFallback: { alignItems: "center", justifyContent: "center", paddingHorizontal: 28, backgroundColor: "#E8EEF3" },
+  mapFallbackText: { color: "#334155", fontSize: 14, fontWeight: "800", textAlign: "center", lineHeight: 24 },
   mapLoading: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(238,243,247,0.65)", zIndex: 2 },
   mapLoadingText: { color: "#334155", fontSize: 13, fontWeight: "800" },
   vehicleMarker: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#FFFFFF", borderWidth: 3, borderColor: "#1D4ED8", alignItems: "center", justifyContent: "center", elevation: 8 },
@@ -1370,8 +1380,8 @@ const providerMapStyles = StyleSheet.create({
   mapAttribution: { position: "absolute", left: 8, color: "#334155", backgroundColor: "rgba(255,255,255,0.82)", paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, fontSize: 9, fontWeight: "800", zIndex: 3 },
   offlineNotice: { position: "absolute", left: 12, right: 12, height: 44, borderRadius: 22, backgroundColor: "#1D4ED8", alignItems: "center", justifyContent: "center", paddingHorizontal: 14, elevation: 5 },
   offlineNoticeText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900", textAlign: "center" },
-  bottomBar: { position: "absolute", left: 0, right: 0, height: 72, direction: "ltr", backgroundColor: "#FFFFFF", borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between", elevation: 12, shadowColor: "#0F172A", shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: -3 } },
-  footerAction: { width: 76, height: 44, alignItems: "center", justifyContent: "center" },
+  bottomBar: { position: "absolute", left: 0, right: 0, height: 82, direction: "ltr", backgroundColor: "#FFFFFF", borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between", elevation: 12, shadowColor: "#0F172A", shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: -3 } },
+  footerAction: { width: 76, height: 48, alignItems: "center", justifyContent: "center" },
   footerActionText: { color: "#17324D", fontSize: 11, fontWeight: "900" },
   powerButton: { width: 180, height: 52, borderRadius: 26, borderWidth: 1, borderColor: "#E1E7EF", alignItems: "center", justifyContent: "center", elevation: 2 },
   powerButtonOn: { backgroundColor: "#DCFCE7" },

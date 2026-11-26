@@ -15,18 +15,19 @@ import { useThemePreference, type ThemeMode } from "@/lib/theme-preference";
 import { loadNotificationPreferences, setNotificationPreferences } from "@/lib/notification-sound";
 import Svg, { Path } from "react-native-svg";
 import { safeNavigate } from "@/lib/safe-navigation";
+import { APP_VARIANT } from "@/lib/app-variant";
 
 export default function AccountSettingsScreen() {
-  const { user, profile, roles, refresh, activeRole, setActiveRole } = useAuth();
+  const { user, profile, roles, refresh } = useAuth();
   const routeParams = useLocalSearchParams<{partner?: string}>();
   const { mode, setMode } = useThemePreference();
   const actualEmail = (() => { const candidate = String(user?.email ?? "").trim().toLowerCase(); return candidate && !/^phone\d+@mamnoon\.app$/.test(candidate) ? candidate : ""; })();
   const [email, setEmail] = useState(actualEmail);
+  const [fullName, setFullName] = useState(profile?.full_name ?? "");
   const [phone, setPhone] = useState(profile?.phone ?? "");
   const [otp, setOtp] = useState("");
   const [phonePending, setPhonePending] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [switchingRole, setSwitchingRole] = useState<string | null>(null);
   const [notificationSound, setNotificationSound] = useState(true);
   const [notificationVibration, setNotificationVibration] = useState(true);
   const [notificationPrefsBusy, setNotificationPrefsBusy] = useState(false);
@@ -51,6 +52,8 @@ export default function AccountSettingsScreen() {
   const [partnerMapBusy, setPartnerMapBusy] = useState(false);
   const [partnerApplications, setPartnerApplications] = useState<any[]>([]);
   const [partnerBusy, setPartnerBusy] = useState(false);
+  const [personalRequests, setPersonalRequests] = useState<any[]>([]);
+  const providerType = APP_VARIANT === "worker" ? "worker" : APP_VARIANT === "large_driver" ? "large_driver" : "driver";
   const governorateLabels: Record<string,string> = {baghdad:"بغداد",basra:"البصرة",nineveh:"نينوى",erbil:"أربيل",sulaymaniyah:"السليمانية",duhok:"دهوك",kirkuk:"كركوك",najaf:"النجف",karbala:"كربلاء",babil:"بابل",anbar:"الأنبار",diyala:"ديالى",saladin:"صلاح الدين",wasit:"واسط",dhiqar:"ذي قار",maysan:"ميسان",muthanna:"المثنى",qadisiyah:"القادسية"};
 
   const isCompanyAdmin = user?.email?.toLowerCase() === "a7md0555666@gmail.com" && roles.includes("super_admin");
@@ -58,6 +61,7 @@ export default function AccountSettingsScreen() {
   useEffect(() => { setEmail(actualEmail); }, [actualEmail]);
   useEffect(() => { if (routeParams.partner === "1") setPartnerFormOpen(true); }, [routeParams.partner]);
   useEffect(() => { if (user?.id) void loadPartnerApplications(); }, [user?.id]);
+  useEffect(() => { if (user?.id && APP_VARIANT === "worker") void loadWorkerProfileChangeRequests(); }, [user?.id]);
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -201,70 +205,41 @@ export default function AccountSettingsScreen() {
       .then(({ data }: any) => { if (data?.company_name) setCompanyName(data.company_name); });
   }, [isCompanyAdmin]);
 
-  async function switchRole(role: string) {
-    if (switchingRole) return;
-    if (!user?.id || !roles.includes(role as (typeof roles)[number])) {
-      Alert.alert("تعذر تبديل الدور", "تأكد من تسجيل الدخول وامتلاكك لهذا الدور.");
+  async function saveProfileInformation() {
+    const nextName = fullName.trim().replace(/\\s+/g, " ");
+    if (!user?.id) { Alert.alert("تعذر الحفظ", "سجّل الدخول من جديد."); return; }
+    if (nextName.length < 2 || nextName.length > 80) {
+      Alert.alert("اسم غير صحيح", "اكتب الاسم الكامل بين حرفين و80 حرفاً.");
       return;
     }
-
-    setSwitchingRole(role);
+    if (personalRequests.some((item) => item.status === "pending" && item.requested_data?.profile_update)) {
+      Alert.alert("طلب قيد المراجعة", "عندك طلب تحديث بيانات ينتظر موافقة الإدارة حالياً."); return;
+    }
+    setBusy(true);
     try {
-      const { data: before, error: beforeError } = await supabase.auth.getSession();
-      if (beforeError) throw beforeError;
-      if (!before.session || before.session.user.id !== user.id) {
-        throw new Error("انتهت جلسة الدخول. سجّل الدخول من جديد قبل تبديل الدور.");
-      }
-
-      const nextRole = role as (typeof roles)[number];
-      const providerTableForRole = (value: string | null) =>
-        value === "driver" || value === "large_driver"
-          ? "driver_profiles"
-          : value === "worker"
-            ? "worker_profiles"
-            : null;
-      const nextProviderTable = providerTableForRole(nextRole);
-      // A user can have more than one provider profile. Deactivate every
-      // provider category except the one being entered, so stale availability
-      // cannot keep receiving dispatches after switching to customer/another role.
-      for (const providerTable of ["driver_profiles", "worker_profiles"]) {
-        if (providerTable === nextProviderTable) continue;
-        const { error: availabilityError } = await (supabase as any)
-          .from(providerTable)
-          .update({ available: false })
-          .eq("user_id", user.id);
-        if (availabilityError) {
-          throw new Error("تعذر إيقاف استقبال الطلبات للدور السابق. لم نبدّل الدور حتى لا تبقى تستقبل طلبات وأنت بوضع الزبون.");
-        }
-      }
-
-      await setActiveRole(nextRole);
-
-      // Role switching changes only the local role preference; it must never
-      // sign out or replace the authenticated Supabase session.
-      const { data: after, error: afterError } = await supabase.auth.getSession();
-      if (afterError) throw afterError;
-      if (!after.session || after.session.user.id !== user.id) {
-        throw new Error("جلسة الحساب تغيّرت أثناء التبديل. لم نكمل الانتقال حفاظاً على حسابك.");
-      }
-
-      safeNavigate("/home", "replace");
+      const { error } = await (supabase as any).rpc("submit_provider_profile_change_request", {
+        _provider_type: "worker",
+        _requested_data: { profile_update: { full_name: nextName } },
+      });
+      if (error) throw error;
+      Alert.alert("تم إرسال الطلب", "وصل تحديث بياناتك إلى الإدارة للمراجعة. يبقى اسمك الحالي معتمداً إلى حين الموافقة.");
+      await loadWorkerProfileChangeRequests();
     } catch (error) {
-      Alert.alert("تعذر تبديل الدور", error instanceof Error ? error.message : "حدث خطأ غير متوقع. حاول مرة ثانية.");
+      Alert.alert("تعذر إرسال طلب التحديث", error instanceof Error ? error.message : "حاول مرة ثانية.");
     } finally {
-      setSwitchingRole(null);
+      setBusy(false);
     }
   }
 
-  function startRegistration(role: "driver" | "large_driver" | "worker") {
-    if (role === "large_driver") {
-      router.push({ pathname: "/onboarding/driver", params: { providerType: "large_driver" } });
-    } else if (role === "driver") {
-      router.push("/onboarding/driver");
-    } else {
-      router.push("/onboarding/worker");
-    }
+  async function loadWorkerProfileChangeRequests() {
+    if (!user?.id) return;
+    const { data } = await (supabase as any).from("provider_change_requests")
+      .select("id,status,rejection_reason,created_at,requested_data")
+      .eq("user_id", user.id).eq("provider_type", "worker")
+      .order("created_at", { ascending: false }).limit(5);
+    setPersonalRequests(data ?? []);
   }
+
 
   async function saveCompanyName() {
     const next = companyName.trim().replace(/\s+/g, " ");
@@ -333,7 +308,24 @@ export default function AccountSettingsScreen() {
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
     <Text style={styles.kicker}>MAMNOON · ACCOUNT</Text>
     <Text style={styles.title}>إعدادات حسابك</Text>
-    <Text style={styles.subtitle}>إدارة أدوارك وبيانات التواصل بأمان</Text>
+    <Text style={styles.subtitle}>إدارة معلومات حسابك وإعدادات التطبيق بأمان</Text>
+    <View style={styles.nameSection}>
+      <Text style={styles.sectionTitle}>معلوماتي الشخصية</Text>
+      <Text style={styles.label}>الاسم الكامل</Text>
+      <RealInput value={fullName} onChangeText={setFullName} placeholder="اكتب اسمك الكامل" autoCapitalize="words" />
+      <View style={{ height: 12 }} />
+      <Button title={busy ? "جارٍ حفظ المعلومات..." : "حفظ تحديث المعلومات"} onPress={saveProfileInformation} loading={busy} />
+      <Text style={styles.hint}>يُحفظ الاسم في ملف حسابك الحقيقي، وتبقى صلاحية التطبيق كما هي.</Text>
+    </View>
+    {APP_VARIANT === "worker" && <View style={styles.nameSection}>
+      <Text style={styles.sectionTitle}>مراجعة تحديث بياناتي</Text>
+      <Text style={styles.note}>تعديل الاسم يُرسل للإدارة للمراجعة، ويبقى الاسم الحالي معتمداً إلى حين الموافقة.</Text>
+      {personalRequests.filter((item) => item.requested_data?.profile_update).slice(0,3).map((item) => <View key={item.id} style={styles.note}>
+        <Text style={styles.note}>{item.status === "pending" ? "طلبك قيد مراجعة الإدارة" : item.status === "approved" ? "تمت الموافقة على آخر تحديث" : "تم رفض آخر تحديث"}</Text>
+        {item.status === "rejected" && <Text style={styles.note}>سبب الرفض: {item.rejection_reason || "يرجى التواصل مع الإدارة"}</Text>}
+      </View>)}
+    </View>}
+
     {isCompanyAdmin && <View style={styles.nameSection}>
       <Text style={styles.sectionTitle}>اسم الشركة الظاهر للمستخدمين</Text>
       <Text style={styles.note}>يظهر هذا الاسم في رسائل انتظار الموافقة والتنبيهات بدلاً من اسم الشخص.</Text>
@@ -368,62 +360,16 @@ export default function AccountSettingsScreen() {
       </View>
       {notificationPrefsBusy && <Text style={styles.notificationPrefsHint}>جارٍ حفظ الإعدادات...</Text>}
     </View>
-    {roles.filter((role) => ["customer", "worker", "driver", "large_driver"].includes(role)).length > 1 && <>
-      <View style={styles.roleSectionHeading}>
-        <View style={styles.roleSwitchIcon}>
-          <Svg width={25} height={25} viewBox="0 0 24 24">
-            <Path d="M7 7h9a3 3 0 0 1 3 3v1m0 0-3-3m3 3 3-3M17 17H8a3 3 0 0 1-3-3v-1m0 0 3 3m-3-3-3 3" stroke="#FFFFFF" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
-          </Svg>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.roleSectionTitle}>تبديل الدور</Text>
-          <Text style={styles.roleSectionHint}>بدّل بين الأدوار المرتبطة بحسابك</Text>
-        </View>
-      </View>
-      <View style={styles.roleGrid}>
-        {["customer", "worker", "driver", "large_driver"].filter((role) => roles.includes(role as any)).map((role) => {
-          const selected = role === "customer"
-            ? { title: "الزبون", mark: "ز", backgroundColor: palette.goldSoft, color: palette.brand }
-            : role === "worker"
-              ? { title: "الفني", mark: "ف", backgroundColor: palette.brandSoft, color: palette.brand }
-              : role === "large_driver"
-                ? { title: "سيارات كبيرة", mark: "ك", backgroundColor: palette.goldSoft, color: palette.gold }
-                : { title: "كابتن تكسي", mark: "س", backgroundColor: palette.brandSoft, color: palette.brand };
-          return (
-            <TouchableOpacity key={role} disabled={switchingRole !== null} activeOpacity={0.82} style={[styles.roleCard, { backgroundColor: selected.backgroundColor, opacity: switchingRole && switchingRole !== role ? 0.55 : 1 }, activeRole === role && styles.roleCardActive]} onPress={() => switchRole(role)}>
-              <View style={styles.roleMark}><Text style={styles.roleEmoji}>{selected.mark}</Text></View>
-              <Text style={[styles.roleTitle, { color: selected.color }]}>{selected.title}</Text>
-              <Text style={[styles.roleHint, { color: selected.color }]}>{switchingRole === role ? "جاري التبديل..." : activeRole === role ? "المساحة الحالية" : "التبديل إلى هذا الدور"}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-    </>}
+    {APP_VARIANT === "customer" && (
     <View style={styles.joinSection}>
       <View style={styles.roleSectionHeading}>
         <View style={[styles.roleSwitchIcon, { backgroundColor: palette.gold }]}>
           <Text style={{ color: palette.brandDeep, fontSize: 22, fontWeight: "900" }}>م</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.roleSectionTitle}>سجّل معنا</Text>
-          <Text style={styles.roleSectionHint}>حسابك يبدأ كزبون، واختار مجال العمل إذا تحب تنضم إلينا</Text>
+          <Text style={styles.roleSectionTitle}>الشركاء</Text>
+          <Text style={styles.roleSectionHint}>انضم إلى شبكة شركاء ممنون من الفنادق والمطاعم والمحلات والمولات</Text>
         </View>
-      </View>
-      <View style={styles.registrationList}>
-        {([
-          { key: "driver", title: "كابتن تكسي", detail: "بيانات السيارة والهوية", mark: "س" },
-          { key: "large_driver", title: "سائق سيارات كبيرة", detail: "كيا حمل أو كيا ركاب أو باص", mark: "ك" },
-          { key: "worker", title: "فني أو مقدم خدمة", detail: "اختيار المهن والاختصاصات وتوثيق الهوية", mark: "ف" },
-        ] as const).map((item) => (
-          <TouchableOpacity key={item.key} activeOpacity={0.82} style={styles.registrationCard} onPress={() => startRegistration(item.key)}>
-            <View style={styles.registrationMark}><Text style={styles.registrationMarkText}>{item.mark}</Text></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.registrationTitle}>{item.title}</Text>
-              <Text style={styles.registrationHint}>{item.detail}</Text>
-            </View>
-            <Text style={styles.registrationAction}>{roles.includes(item.key as any) ? "متابعة / تحديث" : "ابدأ التسجيل"}</Text>
-          </TouchableOpacity>
-        ))}
       </View>
       <View style={styles.partnerJoinBox}>
         <Text style={styles.partnerJoinTitle}>انضم كشريك</Text>
@@ -471,6 +417,7 @@ export default function AccountSettingsScreen() {
       </View>
       <Text style={styles.note}>كل خيارات الانضمام مجمّعة هنا. بعد إكمال بياناتك ومستنداتك تراجع الإدارة طلبك.</Text>
     </View>
+    )}
     <Text style={styles.note}>أي تغيير ببيانات الدخول لا يعتمد إلا بعد إكمال التحقق.</Text>
     <Text style={styles.label}>البريد الإلكتروني</Text>
     {actualEmail ? <Text style={styles.current} selectable>{actualEmail}</Text> : <Text style={styles.hint}>ماكو بريد إلكتروني حقيقي مسجّل بحسابك. أضف بريدك حتى تستلم رسائل التأكيد واستعادة الحساب.</Text>}

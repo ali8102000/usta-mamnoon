@@ -1,8 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import * as SecureStore from "expo-secure-store";
+import { AppState } from "react-native";
 import { supabase } from "./supabase";
 import { cleanupSessionAndListeners } from "./session-cleanup";
+import { filterRolesForApp, getInitialRoleForApp, isRoleAllowedInApp } from "./app-variant";
 
 export type AppRole =
   | "customer"
@@ -123,9 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function restoreActiveRole(uid: string, availableRoles: AppRole[]) {
     const revisionAtStart = roleRevision.current;
-    const fallback = availableRoles.includes("customer")
-      ? "customer"
-      : availableRoles[0] ?? null;
+    const fallback = getInitialRoleForApp(availableRoles) as AppRole | null;
     try {
       // Wait for any role switch already requested before reading the preference.
       await roleWriteQueue.current.catch(() => undefined);
@@ -134,9 +134,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const preferenceKey = rolePreferenceKey(uid);
       const saved = await SecureStore.getItemAsync(preferenceKey);
       const legacy = saved ? null : await SecureStore.getItemAsync("mamnoon_active_role");
-      const selected = saved && availableRoles.includes(saved as AppRole)
+      const selected = saved && availableRoles.includes(saved as AppRole) && isRoleAllowedInApp(saved)
         ? saved as AppRole
-        : legacy && availableRoles.includes(legacy as AppRole)
+        : legacy && availableRoles.includes(legacy as AppRole) && isRoleAllowedInApp(legacy)
           ? legacy as AppRole
           : fallback;
 
@@ -196,7 +196,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // profile/role data is fetched in parallel in the background.
     if (cached && lastUserId.current === uid) {
       setProfile(cached.profile);
-      setRoles(cached.roles);
+      setRoles(filterRolesForApp(cached.roles) as AppRole[]);
       await withStartupTimeout(restoreActiveRole(uid, cached.roles), 5000, "cached_role_restore_timeout").catch((error) => {
         console.warn("[startup] Cached role restore timed out; retaining cached profile:", error);
       });
@@ -253,7 +253,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!mappedRoles.includes("customer")) mappedRoles.unshift("customer");
       setProfile(resolvedProfile);
-      setRoles(mappedRoles);
+      setRoles(filterRolesForApp(mappedRoles) as AppRole[]);
       await withStartupTimeout(restoreActiveRole(uid, mappedRoles), 5000, "active_role_restore_timeout").catch((error) => {
         console.warn("[startup] Active role restore timed out; retaining safe role fallback:", error);
       });
@@ -277,10 +277,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn("[offline] Account lookup failed; using the last saved account snapshot.", error);
       setProfile(cached?.profile ?? null);
       const fallbackRoles: AppRole[] = cached?.roles?.length ? cached.roles : ["customer"];
-      setRoles(fallbackRoles);
+      setRoles(filterRolesForApp(fallbackRoles) as AppRole[]);
       await withStartupTimeout(restoreActiveRole(uid, fallbackRoles), 5000, "active_role_fallback_timeout").catch((roleError) => {
         console.warn("[startup] Could not restore the active role; using customer fallback:", roleError);
-        if (lastUserId.current === uid) setActiveRoleState("customer");
+        if (lastUserId.current === uid) setActiveRoleState(getInitialRoleForApp(fallbackRoles) as AppRole | null);
       });
     }
     })();
@@ -340,6 +340,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
     return operation;
   }, []);
+
+  // An admin can approve this account while the provider app is in the background.
+  // Refresh the role/profile snapshot when the app returns to the foreground so
+  // newly granted worker/driver roles take effect without requiring sign-out.
+  useEffect(() => {
+    let previousState = AppState.currentState;
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const returnedToForeground = nextState === "active" && previousState !== "active";
+      previousState = nextState;
+      if (returnedToForeground) {
+        void refresh().catch((error) => {
+          console.warn("[auth] Could not refresh account after returning to foreground:", error);
+        });
+      }
+    });
+    return () => subscription.remove();
+  }, [refresh]);
 
   useEffect(() => {
     let active = true;

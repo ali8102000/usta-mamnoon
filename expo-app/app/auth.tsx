@@ -15,6 +15,7 @@ import { Button, RealInput } from "@/components/ui";
 import { palette, space } from "@/styles/theme";
 import { Image as ExpoImage } from "expo-image";
 import { useCompanyBranding } from "@/lib/company-branding";
+import { APP_VARIANT } from "@/lib/app-variant";
 
 type Mode = "signup" | "login";
 type AuthSessionTokens = Pick<Session, "access_token" | "refresh_token">;
@@ -64,7 +65,10 @@ export default function AuthScreen() {
           if (metadataError) throw metadataError;
         }
         await refresh();
-        router.replace("/home");
+        if (APP_VARIANT === "worker") router.replace("/onboarding/worker");
+        else if (APP_VARIANT === "driver") router.replace({ pathname: "/onboarding/driver", params: { providerType: "driver" } });
+        else if (APP_VARIANT === "large_driver") router.replace({ pathname: "/onboarding/driver", params: { providerType: "large_driver" } });
+        else router.replace("/home");
       } else {
         const id = identifier.trim();
         if (!id) throw new Error("أدخل رقم الهاتف أو البريد الإلكتروني");

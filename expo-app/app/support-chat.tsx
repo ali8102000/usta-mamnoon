@@ -191,15 +191,19 @@ export default function SupportChatScreen() {
     else if (sentMessage) {
       setMessages((current) => current.some((m) => m.id === sentMessage.id) ? current : [...current, sentMessage]);
       if (!staff) {
-        const { error: aiError } = await supabase.functions.invoke("support-ai-reply", { body: { message_id: sentMessage.id } });
-        if (aiError) console.warn("Support AI reply unavailable; staff can answer from inbox.", aiError.message);
+        void supabase.functions.invoke("support-ai-reply-provider", { body: { message_id: sentMessage.id } })
+          .then(({ error: aiError }) => {
+            if (aiError) console.warn("Provider support AI reply unavailable; staff can answer from inbox.", aiError.message);
+          })
+          .catch((aiError) => console.warn("Provider support AI request failed.", aiError));
       }
     }
   }
 
   if (loading) return <View style={styles.center}><ActivityIndicator /></View>;
   return <View style={styles.container}>
-    <Text style={styles.title}>{customerServiceOnly ? "مركز خدمة العملاء" : "محادثة إدارة ممنون"}</Text>
+    <Text style={styles.title}>{staff ? (customerServiceOnly ? "مركز خدمة العملاء" : "صندوق دعم ممنون") : "مركز الدعم"}</Text>
+    {!staff && <Text style={styles.subtitle}>اسأل مساعد ممنون الذكي عن التطبيق والخدمات. وإذا احتاج موضوعك متابعة خاصة، يحوّلك إلى فريق الدعم.</Text>}
     {!!selected?.subject && <Text style={{ color: palette.muted, fontSize: 11, textAlign: "right", marginBottom: 8 }}>{selected.subject}</Text>}
     {staff && !customerServiceOnly && <View style={styles.startBox}>
       <Text style={styles.startTitle}>ابدأ محادثة مع فني أو سائق</Text>
@@ -227,8 +231,8 @@ export default function SupportChatScreen() {
       onDraftChange={setDraft}
       onSend={() => void send()}
       busy={sending}
-      placeholder="اكتب رسالتك لفريق ممنون..."
-      emptyText="أهلاً بك، اكتب رسالتك لفريق دعم ممنون."
+      placeholder="اسأل مساعد ممنون أو اكتب لفريق الدعم..."
+      emptyText="أهلاً بك في مركز دعم ممنون. اكتب سؤالك وسأساعدك."
       showQuickReplies={false}
     />
   </View>;
@@ -237,7 +241,8 @@ export default function SupportChatScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.pageCanvas, paddingTop: 52, paddingHorizontal: 16 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  title: { fontSize: 23, fontWeight: "900", color: palette.ink, marginBottom: 14, textAlign: "right" },
+  title: { fontSize: 23, fontWeight: "900", color: palette.ink, marginBottom: 6, textAlign: "right" },
+  subtitle: { fontSize: 13, lineHeight: 21, color: palette.muted, textAlign: "right", marginBottom: 12 },
   inbox: { backgroundColor: palette.surface, borderRadius: radius.lg, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: palette.line, maxHeight: 310 },
   inboxTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   inboxTitle: { color: palette.ink, fontWeight: "900", fontSize: 15 },

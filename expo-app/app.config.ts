@@ -3,6 +3,7 @@ import publicBackend from "../config/public-backend.json";
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const mapsKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+  if (!mapsKey) console.warn("[Mamnoon] Google Maps key is not configured; provider dashboards will use a safe fallback instead of mounting a crashing native map.");
   // Web and Android share one committed public backend configuration.
   // Ignore stale EAS Supabase variables so an old project can never be baked into a new APK.
   const supabaseUrl = publicBackend.VITE_SUPABASE_URL.trim();
@@ -77,6 +78,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
       ...(supabaseUrl ? { supabaseUrl } : {}),
       ...(supabasePublishableKey ? { supabasePublishableKey } : {}),
+      googleMapsConfigured: Boolean(mapsKey),
     },
   };
 };

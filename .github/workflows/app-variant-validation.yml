@@ -1,0 +1,54 @@
+name: Validate app identity and role isolation
+
+on:
+  push:
+    branches: [feature/app-role-separation]
+    paths:
+      - "expo-app/**"
+      - ".github/workflows/app-variant-validation.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "expo-app/**"
+      - ".github/workflows/app-variant-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate app identity and role entry points
+        env:
+          EXPECTED_VARIANT: "worker"
+          EXPECTED_PACKAGE: "com.mamnoon.usta"
+          EXPECTED_EAS_PROJECT_ID: "28393988-2688-4390-a78c-069475db2178"
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const config = JSON.parse(fs.readFileSync("expo-app/app.json", "utf8")).expo;
+          const variant = process.env.EXPECTED_VARIANT;
+          const expectedPackage = process.env.EXPECTED_PACKAGE;
+          if (config.extra?.appVariant !== variant) throw new Error("Incorrect appVariant");
+          if (config.android?.package !== expectedPackage) throw new Error("Incorrect Android package");
+          if (config.ios?.bundleIdentifier !== expectedPackage) throw new Error("Incorrect iOS bundle identifier");
+          const easProjectId = config.extra?.eas?.projectId;
+          const expectedEasProjectId = process.env.EXPECTED_EAS_PROJECT_ID;
+          if (!easProjectId || easProjectId !== expectedEasProjectId) {
+            throw new Error("Incorrect or missing Expo project ID for this app variant");
+          }
+          const variantSource = fs.readFileSync("expo-app/src/lib/app-variant.ts", "utf8");
+          const authSource = fs.readFileSync("expo-app/src/lib/auth-context.tsx", "utf8");
+          const indexSource = fs.readFileSync("expo-app/app/index.tsx", "utf8");
+          if (!variantSource.includes("Constants.expoConfig?.extra?.appVariant")) throw new Error("Runtime app variant is not wired");
+          if (!authSource.includes("filterRolesForApp") || !authSource.includes("isRoleAllowedInApp")) throw new Error("Role isolation is missing from auth context");
+          if (!indexSource.includes("APP_VARIANT")) throw new Error("Role-specific startup routing is missing");
+          if (variant !== "customer" && !indexSource.includes(`APP_VARIANT === "${variant}"`)) throw new Error("The app's onboarding route is missing");
+          if (variant !== "customer" && !fs.readFileSync("expo-app/app/auth.tsx", "utf8").includes('router.replace("/");')) {
+            throw new Error("New provider signup must return through role-specific startup routing");
+          }
+          console.log(`Validated ${variant} app identity and role entry points`);
+          NODE

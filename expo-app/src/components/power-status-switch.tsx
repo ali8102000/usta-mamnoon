@@ -21,10 +21,10 @@ export function PowerStatusSwitch({
   onToggle,
   disabled = false,
 }: Props) {
-  const width = scaleFn(196);
-  const height = scaleFn(62);
-  const padding = scaleFn(6);
-  const knobSize = scaleFn(50);
+  const width = scaleFn(228);
+  const height = scaleFn(78);
+  const padding = scaleFn(7);
+  const knobSize = scaleFn(64);
   const travelDistance = width - knobSize - padding * 2;
   const progress = useRef(new Animated.Value(isOnline ? 1 : 0)).current;
   const rotation = useRef(new Animated.Value(0)).current;
@@ -108,7 +108,7 @@ export function PowerStatusSwitch({
           </Svg>
         </Animated.View>
         <View style={styles.powerGlyph}>
-          <Svg width={scaleFn(21)} height={scaleFn(21)} viewBox="0 0 24 24">
+          <Svg width={scaleFn(24)} height={scaleFn(24)} viewBox="0 0 24 24">
             <Path d="M12 2.8v9.1M6.2 5.8a8 8 0 1 0 11.6 0" fill="none" stroke={isOnline ? activeColor : "#475569"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
           </Svg>
         </View>
@@ -119,28 +119,28 @@ export function PowerStatusSwitch({
 
 const styles = StyleSheet.create({
   track: {
-    borderWidth: 1,
+    borderWidth: 2,
     justifyContent: "center",
     alignItems: "center",
     elevation: 3,
     shadowColor: "#0F172A",
-    shadowOpacity: 0.16,
-    shadowRadius: 9,
-    shadowOffset: { width: 0, height: 3 },
-    transform: [{ translateY: -6 }],
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    transform: [{ translateY: -10 }],
   },
-  label: { fontSize: 13, fontWeight: "900", paddingHorizontal: 60 },
+  label: { fontSize: 18, fontWeight: "900", letterSpacing: 0.2, paddingHorizontal: 74, textAlign: "center", includeFontPadding: true },
   knob: {
     position: "absolute",
-    top: 6,
+    top: 7,
     backgroundColor: "#FFFFFF",
-    borderWidth: 1.5,
+    borderWidth: 2,
     alignItems: "center",
     justifyContent: "center",
     elevation: 4,
     shadowColor: "#0F172A",
-    shadowOpacity: 0.18,
-    shadowRadius: 5,
+    shadowOpacity: 0.24,
+    shadowRadius: 7,
     shadowOffset: { width: 0, height: 2 },
   },
   arc: { position: "absolute", alignItems: "center", justifyContent: "center" },
