@@ -242,8 +242,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (index >= 0) mappedRoles.splice(index, 1);
       }
 
-      const driverApproved = !rolesResult.error && !driverResult.error && driverResult.data?.status === "approved";
-      const workerApproved = !rolesResult.error && !workerResult.error && workerResult.data?.status === "approved";
+      const assignedRoles = new Set((rolesResult.data ?? []).map((row) => row.role as AppRole));
+      const driverCategory = String(driverResult.data?.vehicle_category);
+      const requiredDriverRole: AppRole | null = driverCategory === "large" ? "large_driver"
+        : ["economy", "premium", "luxury"].includes(driverCategory) ? "driver" : null;
+      const driverApproved = !rolesResult.error && !driverResult.error && driverResult.data?.status === "approved"
+        && !!requiredDriverRole && assignedRoles.has(requiredDriverRole);
+      const workerApproved = !rolesResult.error && !workerResult.error && workerResult.data?.status === "approved"
+        && assignedRoles.has("worker");
 
       if (driverApproved && driverResult.data) {
         const category = String(driverResult.data.vehicle_category);
