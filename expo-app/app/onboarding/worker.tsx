@@ -99,13 +99,18 @@ export default function WorkerOnboarding() {
       supabase.from("user_roles").select("role").eq("user_id", user.id).eq("role", "worker").maybeSingle(),
     ]).then(([verification, workerProfile, workerRole]) => {
       if (!active) return;
-      // A granted worker role is authoritative proof of prior approval.
+      // Approval requires both the server-approved profile and the granted role.
+      // A stale role or a partially updated verification record must not unlock the app.
       const approved = !!workerRole.data
-        || verification.data?.status === "approved"
-        || workerProfile.data?.status === "approved";
-      setApprovedWorkerRole(!!workerRole.data);
+        && workerProfile.data?.status === "approved"
+        && verification.data?.status !== "rejected";
+      setApprovedWorkerRole(approved);
+      const rejected = verification.data?.status === "rejected" || workerProfile.data?.status === "rejected";
+      const hasApprovalSignal = verification.data?.status === "approved" || workerProfile.data?.status === "approved";
       const resolvedStatus = approved
         ? "approved"
+        : rejected ? "rejected"
+        : hasApprovalSignal ? "pending"
         : verification.data?.status ?? workerProfile.data?.status ?? null;
       if (resolvedStatus) setStatus(resolvedStatus);
       setRejectionReason(verification.data?.rejection_reason ?? null);
@@ -304,7 +309,10 @@ export default function WorkerOnboarding() {
       setStatus("pending");
       setRejectionReason(null);
       await refresh();
-      Alert.alert("تم إرسال الطلب", "تم حفظ الصورة الشخصية والبطاقة الوطنية من الجهتين. طلبك الآن بانتظار موافقة " + companyName + ".");
+      Alert.alert(
+        "تم استلام طلبك",
+        "لقد تلقّينا طلبك للانضمام إلى ممنون كمقدم خدمة. طلبك قيد المراجعة من الإدارة، ولن تتمكن من دخول واجهة الفني أو استقبال الطلبات قبل اعتمادك. سنرسل إليك إشعاراً فور صدور القرار.",
+      );
     } catch (err: unknown) {
       Alert.alert("تعذر إكمال التسجيل", err instanceof Error ? err.message : "حدث خطأ غير متوقع.");
     } finally {
@@ -319,10 +327,10 @@ export default function WorkerOnboarding() {
         <Text style={styles.statusText}>
           {status === "approved"
             ? "تهانينا! تم تفعيل حسابك كفني بعد تدقيق مستمسكاتك. نرحب بك ضمن أسرة شركة ممنون الموثّقة ونتمنى لك التوفيق والنجاح."
-            : "استلمنا صورتك الشخصية والبطاقة الوطنية من الأمام والخلف. طلبك بانتظار موافقة " + companyName + "، وستتمكن من استقبال الطلبات بعد الاعتماد."}
+            : "لقد تلقّينا طلبك بنجاح، وهو الآن قيد المراجعة لدى إدارة ممنون. لن تتمكن من دخول واجهة الفني أو استقبال الطلبات قبل اعتمادك. سنرسل إليك إشعاراً فور صدور القرار."}
         </Text>
         {status === "pending" ? (
-          <Button title="تعديل البيانات وإعادة إرفاق المستمسكات" onPress={() => setStatus(null)} />
+          <Button title="تحديث المعلومات" onPress={() => setStatus(null)} />
         ) : (
           <>
             {pendingSpecialtyChange && <Text style={styles.note}>طلب تحديث الاختصاصات بانتظار موافقة الإدارة. اختصاصاتك الحالية تبقى فعالة.</Text>}

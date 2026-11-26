@@ -108,7 +108,9 @@ export default function DriverOnboarding() {
         supabase.from("driver_profiles")
           .select("status,vehicle_make,vehicle_model,vehicle_year,vehicle_plate,vehicle_color,vehicle_category,vehicle_type")
           .eq("user_id", user.id).maybeSingle(),
-      ]).then(async ([verification, driverProfile]) => {
+        supabase.from("user_roles").select("role")
+          .eq("user_id", user.id).eq("role", providerRole).maybeSingle(),
+      ]).then(async ([verification, driverProfile, providerRoleResult]) => {
         if (!active) return;
         const saved = driverProfile.data;
         // Large-vehicle onboarding must never inherit taxi verification/status.
@@ -119,7 +121,16 @@ export default function DriverOnboarding() {
           : saved;
         const verificationData = verification.data;
         const m = (verificationData?.metadata ?? {}) as Record<string, unknown>;
-        const resolvedStatus = verificationData?.status ?? relevantSaved?.status ?? null;
+        const roleGranted = !!providerRoleResult.data;
+        const profileApproved = relevantSaved?.status === "approved";
+        const approved = roleGranted && profileApproved && verificationData?.status !== "rejected";
+        const rejected = verificationData?.status === "rejected" || relevantSaved?.status === "rejected";
+        const hasApprovalSignal = verificationData?.status === "approved" || relevantSaved?.status === "approved";
+        const resolvedStatus = approved
+          ? "approved"
+          : rejected ? "rejected"
+          : hasApprovalSignal ? "pending"
+          : verificationData?.status ?? relevantSaved?.status ?? null;
         if (resolvedStatus) setStatus(resolvedStatus);
         setRejectionReason(verificationData?.rejection_reason ?? null);
         const make = typeof relevantSaved?.vehicle_make === "string" ? relevantSaved.vehicle_make : m.vehicleMake;
@@ -464,7 +475,12 @@ export default function DriverOnboarding() {
       setChangedDocuments({});
       setRejectionReason(null);
       await refresh();
-      Alert.alert("تم إرسال الطلب", "وصل طلبك إلى إدارة " + companyName + " وهو الآن بانتظار الموافقة. لا يمكنك استقبال الرحلات قبل الاعتماد.");
+      Alert.alert(
+        "تم استلام طلبك",
+        largeDriverMode
+          ? "لقد تلقّينا طلبك للانضمام إلى ممنون كسائق نقل ثقيل. طلبك قيد المراجعة، ولن تتمكن من دخول واجهة النقل أو استقبال الطلبات قبل اعتمادك. سنرسل إليك إشعاراً فور صدور القرار."
+          : "لقد تلقّينا طلبك للانضمام إلى ممنون كسائق تكسي. طلبك قيد المراجعة، ولن تتمكن من دخول واجهة السائق أو استقبال الرحلات قبل اعتمادك. سنرسل إليك إشعاراً فور صدور القرار.",
+      );
     } catch (err: unknown) {
       Alert.alert("تعذر إكمال التسجيل", err instanceof Error ? err.message : "حدث خطأ غير متوقع.");
     } finally {
@@ -483,7 +499,9 @@ export default function DriverOnboarding() {
         <Text style={styles.statusText}>
           {status === "approved"
             ? (largeDriverMode ? "تم اعتمادك سائقاً للسيارات الكبيرة. تقدر تستقبل طلبات كيا الحمل والركاب والباص حسب نوع مركبتك." : "تهانينا! تم تفعيل حسابك كسائق تكسي بعد تدقيق مستمسكاتك وسيارتك. نرحب بك ضمن أسرة شركة ممنون الموثّقة ونتمنى لك التوفيق والنجاح.")
-            : "استلمنا بيانات السيارة والهوية. طلبك الآن بانتظار موافقة " + companyName + "، وستتمكن من استقبال الرحلات بعد الاعتماد."}
+            : (largeDriverMode
+                ? "لقد تلقّينا طلبك كسائق نقل ثقيل، وهو الآن قيد المراجعة لدى إدارة ممنون. لن تتمكن من دخول واجهة النقل أو استقبال الطلبات قبل اعتمادك. سنرسل إليك إشعاراً فور صدور القرار."
+                : "لقد تلقّينا طلبك كسائق تكسي، وهو الآن قيد المراجعة لدى إدارة ممنون. لن تتمكن من دخول واجهة السائق أو استقبال الرحلات قبل اعتمادك. سنرسل إليك إشعاراً فور صدور القرار.")}
         </Text>
         {status === "approved" ? (
           <>
@@ -507,8 +525,7 @@ export default function DriverOnboarding() {
           </>
         ) : (
           <View style={{ gap: 10 }}>
-            <Button title="تعديل البيانات وإعادة إرفاق السنوية والمستمسكات" onPress={() => setStatus(null)} />
-            <Button title="العودة للرئيسية" onPress={() => safeNavigate("/home", "replace")} />
+            <Button title="تحديث المعلومات" onPress={() => setStatus(null)} />
           </View>
         )}
       </View>

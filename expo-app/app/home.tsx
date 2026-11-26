@@ -18,6 +18,7 @@ import {
   Vibration,
 } from "react-native";
 import { supabase } from "@/lib/supabase";
+import { APP_VARIANT } from "@/lib/app-variant";
 import { useAuth } from "@/lib/auth-context";
 import * as Location from "expo-location";
 import * as Haptics from "expo-haptics";
@@ -60,7 +61,7 @@ type IncomingRequest = {
 };
 
 export default function HomeScreen() {
-  const { user, profile, roles, activeRole } = useAuth();
+  const { user, profile, roles, activeRole, loading: authLoading } = useAuth();
   const selectedRole = activeRole && roles.includes(activeRole)
     ? activeRole
     : roles.includes("customer") ? "customer" : roles[0] || "customer";
@@ -88,6 +89,24 @@ export default function HomeScreen() {
       : selectedRole === "worker"
         ? "فني خدمات 🛠️"
         : "زبون 👤";
+
+  // Deep links must not bypass the approval gate enforced at app startup.
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      router.replace("/auth");
+      return;
+    }
+    const staff = roles.some((role) => ["admin", "super_admin", "support", "finance", "moderator"].includes(role));
+    if (staff || APP_VARIANT === "customer") return;
+    if (APP_VARIANT === "worker" && !roles.includes("worker")) {
+      router.replace("/onboarding/worker");
+    } else if (APP_VARIANT === "driver" && !roles.includes("driver")) {
+      router.replace({ pathname: "/onboarding/driver", params: { providerType: "driver" } });
+    } else if (APP_VARIANT === "large_driver" && !roles.includes("large_driver")) {
+      router.replace({ pathname: "/onboarding/driver", params: { providerType: "large_driver" } });
+    }
+  }, [authLoading, user?.id, roles]);
 
   const loadIncoming = useCallback(async () => {
     if (!user || (selectedRole !== "driver" && selectedRole !== "large_driver" && selectedRole !== "worker")) {
