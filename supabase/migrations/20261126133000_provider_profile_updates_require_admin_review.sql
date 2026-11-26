@@ -212,7 +212,7 @@ BEGIN
   END IF;
   IF _profile_update IS NULL
      OR jsonb_typeof(_profile_update) IS DISTINCT FROM 'object'
-     OR jsonb_object_length(_profile_update) <> 1
+     OR (_profile_update - 'full_name') <> '{}'::jsonb
      OR NOT (_profile_update ? 'full_name') THEN
     RAISE EXCEPTION 'invalid_profile_update';
   END IF;
