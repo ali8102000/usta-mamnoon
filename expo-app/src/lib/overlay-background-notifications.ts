@@ -5,15 +5,12 @@ import { AppState, Platform } from "react-native";
 import { requireNativeModule } from "expo-modules-core";
 
 const TASK_NAME = "MAMNOON_PROVIDER_REQUEST_OVERLAY";
-
 type OverlayNativeModule = {
   isPermissionGranted(): boolean;
-  showRequestOverlay(title: string, body: string, deepLink: string): boolean;
+  showRequestOverlay(title: string, body: string, deepLink: string, soundEnabled: boolean, vibrationEnabled: boolean): boolean;
   hideRequestOverlay(): boolean;
 };
-const OverlayNative = Platform.OS === "android"
-  ? requireNativeModule<OverlayNativeModule>("MamnoonOverlayPermission")
-  : null;
+const OverlayNative = Platform.OS === "android" ? requireNativeModule<OverlayNativeModule>("MamnoonOverlayPermission") : null;
 
 TaskManager.defineTask<Notifications.NotificationTaskPayload>(TASK_NAME, async ({ data, error }) => {
   if (Platform.OS !== "android" || !OverlayNative || error || !data) return;
@@ -22,20 +19,19 @@ TaskManager.defineTask<Notifications.NotificationTaskPayload>(TASK_NAME, async (
     const raw = (data as any)?.data?.dataString;
     if (typeof raw !== "string") return;
     const payload = JSON.parse(raw) as {
-      type?: string;
-      request_id?: string;
-      overlay_title?: string;
-      overlay_body?: string;
+      type?: string; request_id?: string; overlay_title?: string; overlay_body?: string;
+      sound_enabled?: boolean; vibration_enabled?: boolean;
     };
     if (payload.type !== "provider_request_overlay" || typeof payload.request_id !== "string") return;
     if (!OverlayNative.isPermissionGranted()) return;
     const scheme = Constants.expoConfig?.scheme;
     if (!scheme) return;
-    const deepLink = `${scheme}://request/${payload.request_id}?accept=1`;
     OverlayNative.showRequestOverlay(
       payload.overlay_title || "طلب جديد من ممنون",
       payload.overlay_body || "وصلك طلب جديد. اضغط قبول للرد فوراً.",
-      deepLink
+      `${scheme}://request/${payload.request_id}?accept=1`,
+      payload.sound_enabled !== false,
+      payload.vibration_enabled !== false
     );
   } catch (taskError) {
     console.warn("[overlay-push] Background request overlay failed:", taskError);
