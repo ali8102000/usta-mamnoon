@@ -216,7 +216,7 @@ export default function AccountSettingsScreen() {
     }
     setBusy(true);
     try {
-      const { error } = await (supabase as any).rpc("submit_provider_change_request", {
+      const { error } = await (supabase as any).rpc("submit_provider_profile_change_request", {
         _provider_type: "worker",
         _requested_data: { profile_update: { full_name: nextName } },
       });
