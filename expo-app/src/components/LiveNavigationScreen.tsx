@@ -4,7 +4,6 @@ import {
   StyleSheet, Text, View, useWindowDimensions,
 } from "react-native";
 import MapView, { AnimatedRegion, Marker, Polyline, PROVIDER_GOOGLE, Region } from "react-native-maps";
-import * as Location from "expo-location";
 import { supabase } from "@/lib/supabase";
 import { haversineMeters, LatLng, RouteResult, routeFromProxy } from "@/lib/live-navigation";
 
@@ -14,6 +13,8 @@ type Props = {
   role: MamnoonRole;
   pickup: LatLng;
   destination: LatLng;
+  liveLocation: LatLng | null;
+  liveHeading?: number | null;
   customerName?: string;
   providerName?: string;
   phone?: string;
@@ -118,6 +119,24 @@ export default function LiveNavigationScreen(props: Props) {
       setManeuver(String(payload.next_maneuver ?? ""));
       animatedCoordinate.timing({ ...point, latitudeDelta: 0.01, longitudeDelta: 0.01, toValue: 0, duration: 2800, useNativeDriver: false }).start();
     });
+    channel.on("postgres_changes", {
+      event: "*", schema: "public", table: "request_navigation",
+      filter: `request_id=eq.${props.requestId}`,
+    }, ({ new: row }) => {
+      if (providerMode || !row) return;
+      const data = row as any;
+      const points = Array.isArray(data.route_points) ? data.route_points : [];
+      setRoute({
+        routePoints: points.map((p: any) => ({ latitude: Number(p.latitude ?? p.lat), longitude: Number(p.longitude ?? p.lng) })),
+        routeSteps: Array.isArray(data.route_steps) ? data.route_steps : [],
+        distanceKm: Number(data.distance_meters ?? 0) / 1000,
+        durationMin: Number(data.eta_minutes ?? 0),
+      });
+      setEta(Number(data.eta_minutes ?? 0));
+      setDistance(Number(data.distance_meters ?? 0));
+      setManeuver(String(data.next_maneuver ?? ""));
+      setStreet(String(data.current_street ?? ""));
+    });
     channel.subscribe();
     return () => {
       void supabase.removeChannel(channel);
@@ -131,13 +150,15 @@ export default function LiveNavigationScreen(props: Props) {
     (async () => {
       try {
         if (providerMode) {
-          const permission = await Location.requestForegroundPermissionsAsync();
-          if (permission.status !== "granted") throw new Error("يرجى السماح بالوصول إلى الموقع");
-          const here = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          const point = { latitude: here.coords.latitude, longitude: here.coords.longitude };
+          // مصدر GPS الوحيد هو صفحة الطلب الحالية؛ لا ننشئ مراقب موقع ثانياً.
+          const point = props.liveLocation;
+          if (!point) {
+            if (active) setBusy(false);
+            return;
+          }
           if (!active) return;
           setLive(point);
-          setHeading(here.coords.heading ?? 0);
+          setHeading(Number(props.liveHeading ?? 0));
           await fetchRoadRoute(point, target);
         } else {
           const { data, error: readError } = await supabase.from("request_navigation")
@@ -167,58 +188,40 @@ export default function LiveNavigationScreen(props: Props) {
     return () => { active = false; };
   }, [props.requestId, providerMode, fetchRoadRoute, target]);
 
-  // تتبع المزود: يحدّث الموقع كل 3 ثوانٍ ويعيد حساب الطريق فقط عند انحراف 50م
-  // أو مرور 30 ثانية، مع حفظ آخر موقع في live_locations عند كل بث.
+  // يستقبل الموقع من صفحة الطلب التي تملك GPS وlive_locations؛ لا يكتب هنا أي موقع.
+  // هذا يمنع تكرار watchPositionAsync أو تضارب upsert بين شاشتين.
   useEffect(() => {
-    if (!providerMode || phase === "service_work" || phase === "completed") return;
-    let subscription: Location.LocationSubscription | null = null;
-    let alive = true;
-    (async () => {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== "granted") return;
-      subscription = await Location.watchPositionAsync({
-        accuracy: Location.Accuracy.BestForNavigation,
-        timeInterval: 3000,
-        distanceInterval: 3,
-      }, async (position) => {
-        if (!alive) return;
-        const point = { latitude: position.coords.latitude, longitude: position.coords.longitude };
-        const course = Number(position.coords.heading ?? 0);
-        setLive(point);
-        setHeading(course);
-        animatedCoordinate.timing({ ...point, latitudeDelta: 0.01, longitudeDelta: 0.01, toValue: 0, duration: 2600, useNativeDriver: false }).start();
+    if (!providerMode || !props.liveLocation || phase === "service_work" || phase === "completed") return;
+    const point = props.liveLocation;
+    const course = Number(props.liveHeading ?? 0);
+    setLive(point);
+    setHeading(course);
+    animatedCoordinate.timing({
+      ...point, latitudeDelta: 0.01, longitudeDelta: 0.01,
+      toValue: 0, duration: 900, useNativeDriver: false,
+    }).start();
 
-        const now = Date.now();
-        if (now - lastBroadcastAt.current >= 3000) {
-          lastBroadcastAt.current = now;
-          const { data: auth } = await supabase.auth.getUser();
-          const userId = auth.user?.id;
-          if (userId) {
-            await supabase.from("live_locations").upsert({
-              request_id: props.requestId, user_id: userId, role: "provider",
-              lat: point.latitude, lng: point.longitude, heading: course,
-              updated_at: new Date().toISOString(),
-            }, { onConflict: "request_id,user_id" });
-          }
-          await channelRef.current?.send({
-            type: "broadcast", event: "location",
-            payload: {
-              lat: point.latitude, lng: point.longitude, heading: course,
-              speed: position.coords.speed ?? 0, eta_minutes: eta,
-              distance_meters: distance, current_street: street,
-              next_maneuver: maneuver,
-            },
-          });
-        }
-
-        const drift = lastRoutePoint.current ? haversineMeters(lastRoutePoint.current, point) : 9999;
-        if (drift > 50 || now - lastRouteAt.current >= 30000) {
-          try { await fetchRoadRoute(point, target); } catch (e) { console.warn("[mamnoon-navigation] reroute", e); }
-        }
+    const now = Date.now();
+    if (now - lastBroadcastAt.current >= 3000) {
+      lastBroadcastAt.current = now;
+      void channelRef.current?.send({
+        type: "broadcast", event: "location",
+        payload: {
+          lat: point.latitude, lng: point.longitude, heading: course,
+          eta_minutes: eta, distance_meters: distance,
+          current_street: street, next_maneuver: maneuver,
+        },
       });
-    })().catch((e) => setError(e?.message ?? "تعذّر تفعيل تتبع الموقع"));
-    return () => { alive = false; subscription?.remove(); };
-  }, [providerMode, phase, props.requestId, target, fetchRoadRoute, animatedCoordinate, eta, distance, street, maneuver]);
+    }
+
+    const drift = lastRoutePoint.current ? haversineMeters(lastRoutePoint.current, point) : 9999;
+    if (drift > 50 || now - lastRouteAt.current >= 30000) {
+      void fetchRoadRoute(point, target).catch((e) => console.warn("[mamnoon-navigation] reroute", e));
+    }
+  }, [
+    providerMode, phase, props.liveLocation?.latitude, props.liveLocation?.longitude,
+    props.liveHeading, target, fetchRoadRoute, animatedCoordinate, eta, distance, street, maneuver,
+  ]);
 
   // مزامنة معلومات الانعطاف مع أول خطوة متبقية.
   useEffect(() => {
