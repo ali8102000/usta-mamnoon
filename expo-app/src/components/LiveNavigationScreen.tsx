@@ -159,7 +159,6 @@ export default function LiveNavigationScreen(props: Props) {
           if (!active) return;
           setLive(point);
           setHeading(Number(props.liveHeading ?? 0));
-          await fetchRoadRoute(point, target);
         } else {
           const { data, error: readError } = await supabase.from("request_navigation")
             .select("route_phase,route_points,route_steps,eta_minutes,distance_meters,current_street,next_maneuver")
