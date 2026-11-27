@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
-import { useLocalSearchParams } from "expo-router";
+import { Redirect } from "expo-router";
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Image, Modal,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
+import { APP_VARIANT } from "@/lib/app-variant";
 import { safeNavigate } from "@/lib/safe-navigation";
 import { Button } from "@/components/ui";
 import { palette, radius } from "@/styles/theme";
@@ -24,11 +25,17 @@ const CATEGORIES = [
 ] as const;
 
 export default function DriverOnboarding() {
+  // This route belongs only to the taxi and large-vehicle apps.
+  // Never allow a deep link in the usta app to create another provider role.
+  if (APP_VARIANT !== "driver" && APP_VARIANT !== "large_driver") {
+    return <Redirect href="/" />;
+  }
+  return <DriverOnboardingScreen />;
+}
+
+function DriverOnboardingScreen() {
   const { user, profile, refresh, setActiveRole, roles } = useAuth();
-  // Accept both the native parameter and the web/deep-link parameter so
-  // customer entry points consistently open the large-vehicle registration flow.
-  const params = useLocalSearchParams<{ providerType?: string; provider?: string }>();
-  const largeDriverMode = params.providerType === "large_driver" || params.provider === "large_driver";
+  const largeDriverMode = APP_VARIANT === "large_driver";
   const providerRole = largeDriverMode ? "large_driver" : "driver";
   const [companyName, setCompanyName] = useState("شركة ممنون");
   const [models, setModels] = useState<VehicleModel[]>([]);
