@@ -48,9 +48,14 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
       .select("customer_id, provider_id, provider_role, status, type, provider_arrived_at")
       .eq("id", context.requestId)
       .maybeSingle();
+    const { data: teamMembership } = context.role === "provider" && context.providerRole === "worker" && request?.type === "service"
+      ? await (supabase as any).from("service_request_providers").select("provider_id")
+          .eq("request_id", context.requestId).eq("provider_id", context.userId).maybeSingle()
+      : { data: null };
     const isCorrectParticipant = request && (
       (context.role === "customer" && request.customer_id === context.userId) ||
-      (context.role === "provider" && request.provider_id === context.userId && request.provider_role === context.providerRole)
+      (context.role === "provider" && request.provider_id === context.userId && request.provider_role === context.providerRole) ||
+      (context.role === "provider" && context.providerRole === "worker" && request.type === "service" && Boolean(teamMembership))
     );
     const isActive = request && ["accepted", "in_progress"].includes(request.status);
     const serviceProviderArrived = context.role === "provider" && request?.type === "service" && Boolean(request.provider_arrived_at);
