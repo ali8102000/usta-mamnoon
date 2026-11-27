@@ -1,0 +1,131 @@
+name: Build Android Play AAB
+
+on:
+  push:
+    branches: [feature/live-navigation-v1]
+    paths:
+      - ".github/workflows/build-android-aab.yml"
+      - "expo-app/**"
+      - "config/public-backend.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-aab-usta-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-aab:
+    name: Build usta Play Store AAB
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: expo-app
+    env:
+      APP_ENV: production
+      EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: yarn
+          cache-dependency-path: expo-app/yarn.lock
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Verify app identity and required signing secrets
+        run: |
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const c = JSON.parse(fs.readFileSync("app.json", "utf8")).expo;
+          if (c.android?.package !== "com.mamnoon.usta") throw new Error("Unexpected Android package: " + c.android?.package);
+          if (c.extra?.appVariant !== "worker") throw new Error("Unexpected app variant: " + c.extra?.appVariant);
+          console.log("Verified worker / com.mamnoon.usta");
+          NODE
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD EXPO_PUBLIC_GOOGLE_MAPS_API_KEY; do
+            if [ -z "${!name:-}" ]; then echo "::error::Missing GitHub Actions secret: $name"; exit 1; fi
+          done
+
+      - name: Install dependencies
+        run: |
+          npm install --global yarn@1.22.22
+          yarn install --frozen-lockfile
+
+      - name: Generate Android project
+        env:
+          CI: "1"
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Configure Play upload signing
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/mamnoon-upload-key.jks
+        run: |
+          set -euo pipefail
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          test -s "$ANDROID_KEYSTORE_PATH"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          p = Path("android/app/build.gradle")
+          s = p.read_text()
+          marker = "signingConfigs {"
+          if marker not in s:
+              raise SystemExit("Could not find Android signingConfigs block")
+          signing = """
+                  mamnoonUpload {
+                      storeFile file(System.getenv("ANDROID_KEYSTORE_PATH"))
+                      storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                      keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+                  }
+          """
+          s = s.replace(marker, marker + signing, 1)
+          release_at = s.find("release {")
+          if release_at < 0:
+              raise SystemExit("Could not find release build type")
+          debug_sign = s.find("signingConfig signingConfigs.debug", release_at)
+          if debug_sign < 0:
+              raise SystemExit("Could not find release debug signing config to replace")
+          s = s[:debug_sign] + "signingConfig signingConfigs.mamnoonUpload" + s[debug_sign + len("signingConfig signingConfigs.debug"):]
+          p.write_text(s)
+          PY
+        shell: bash
+
+      - name: Build signed Android App Bundle
+        working-directory: expo-app/android
+        run: ./gradlew bundleRelease --no-daemon
+
+      - name: Verify AAB signature and package
+        working-directory: expo-app
+        run: |
+          set -euo pipefail
+          AAB="android/app/build/outputs/bundle/release/app-release.aab"
+          test -s "$AAB"
+          jarsigner -verify "$AAB" >/dev/null
+          echo "AAB exists and its JAR signature is valid."
+          ls -lh "$AAB"
+
+      - name: Upload Play Store AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: mamnoon-usta-play-aab
+          path: expo-app/android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 30
