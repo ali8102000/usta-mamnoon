@@ -106,7 +106,7 @@ export default function DriverOnboarding() {
         supabase.from("provider_verifications")
           .select("status,rejection_reason,metadata")
           .eq("user_id", user.id).eq("provider_type", providerRole).maybeSingle(),
-        supabase.from("driver_profiles")
+        (supabase as any).from(largeDriverMode ? "naqil_profiles" : "driver_profiles")
           .select("status,vehicle_make,vehicle_model,vehicle_year,vehicle_plate,vehicle_color,vehicle_category,vehicle_type")
           .eq("user_id", user.id).maybeSingle(),
         supabase.from("user_roles").select("role")
@@ -422,7 +422,7 @@ export default function DriverOnboarding() {
         .update({ full_name: legalName.trim() }).eq("id", user.id);
       if (profileError) throw new Error(`تعذر تحديث الاسم: ${profileError.message}`);
 
-      const { error: driverError } = await supabase.from("driver_profiles").upsert({
+      const { error: driverError } = await (supabase as any).from(largeDriverMode ? "naqil_profiles" : "driver_profiles").upsert({
         user_id: user.id,
         vehicle_make: category === "large" ? "Kia" : selectedMake,
         vehicle_model: resolvedModel.model,
