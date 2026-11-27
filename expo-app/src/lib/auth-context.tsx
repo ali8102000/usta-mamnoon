@@ -111,6 +111,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [roles, setRoles] = useState<AppRole[]>([]);
+  // Keep the last server-verified role during a foreground refresh. Location
+  // permission prompts can background Android and trigger a transient refresh;
+  // clearing this role mid-refresh incorrectly redirects providers to onboarding.
+  const rolesRef = useRef<AppRole[]>([]);
+  rolesRef.current = roles;
   const [activeRole, setActiveRoleState] = useState<AppRole | null>(null);
   const [loading, setLoading] = useState(true);
   const lastUserId = useRef<string | null>(null);
@@ -217,8 +222,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Provider access is never restored from an offline cache: approval must
       // be revalidated against the server before a provider app can open its home.
       const cachedRoles = APP_VARIANT === "customer"
-        ? cached.roles
+        ? [...cached.roles]
         : cached.roles.filter((role) => role !== "driver" && role !== "large_driver" && role !== "worker");
+      // Offline cache alone must never grant provider access. However, if this
+      // same signed-in session already has a live-verified app role in memory,
+      // retain it while the fresh server check is running.
+      if (APP_VARIANT !== "customer" && rolesRef.current.includes(APP_VARIANT as AppRole) && !cachedRoles.includes(APP_VARIANT as AppRole)) {
+        cachedRoles.push(APP_VARIANT as AppRole);
+      }
       setProfile(cached.profile);
       setRoles(filterRolesForApp(cachedRoles) as AppRole[]);
       await withStartupTimeout(restoreActiveRole(uid, cachedRoles), 5000, "cached_role_restore_timeout").catch((error) => {
@@ -260,6 +271,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const index = mappedRoles.indexOf(role);
         if (index >= 0) mappedRoles.splice(index, 1);
       }
+      // If the role-specific profile request failed transiently, do not revoke
+      // an already verified role from this same session. A successful response
+      // below still remains authoritative and can remove a genuinely revoked role.
+      const roleProfileUnavailable =
+        (APP_VARIANT === "worker" && workerResult.error) ||
+        ((APP_VARIANT === "driver" || APP_VARIANT === "large_driver") && driverResult.error);
+      if (roleProfileUnavailable && rolesRef.current.includes(APP_VARIANT as AppRole)) {
+        mappedRoles.push(APP_VARIANT as AppRole);
+      }
 
       const driverApproved = !driverResult.error && driverResult.data?.status === "approved";
       const workerApproved = !workerResult.error && workerResult.data?.status === "approved";
@@ -298,8 +318,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn("[offline] Account lookup failed; using the last saved account snapshot.", error);
       setProfile(cached?.profile ?? null);
       const fallbackRoles: AppRole[] = cached?.roles?.length
-        ? (APP_VARIANT === "customer" ? cached.roles : cached.roles.filter((role) => role !== "driver" && role !== "large_driver" && role !== "worker"))
+        ? (APP_VARIANT === "customer" ? [...cached.roles] : cached.roles.filter((role) => role !== "driver" && role !== "large_driver" && role !== "worker"))
         : ["customer"];
+      // Preserve only a role that was already verified in this live session;
+      // never promote a role solely from the offline cache.
+      if (APP_VARIANT !== "customer" && rolesRef.current.includes(APP_VARIANT as AppRole) && !fallbackRoles.includes(APP_VARIANT as AppRole)) {
+        fallbackRoles.push(APP_VARIANT as AppRole);
+      }
       setRoles(filterRolesForApp(fallbackRoles) as AppRole[]);
       await withStartupTimeout(restoreActiveRole(uid, fallbackRoles), 5000, "active_role_fallback_timeout").catch((roleError) => {
         console.warn("[startup] Could not restore the active role; using customer fallback:", roleError);
@@ -348,7 +373,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const uid = data.session?.user.id ?? null;
         if (uid) {
           const previousId = lastUserId.current;
-          if (previousId !== uid) roleRevision.current += 1;
+          if (previousId !== uid) {
+            roleRevision.current += 1;
+            rolesRef.current = [];
+            setRoles([]);
+            setProfile(null);
+            setActiveRoleState(null);
+          }
           if (previousId && previousId !== uid) void clearCachedAuthProfile(previousId);
           lastUserId.current = uid;
           await loadProfile(uid);
@@ -409,6 +440,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const previousId = lastUserId.current;
       if (previousId !== nextUserId) roleRevision.current += 1;
       if (nextUserId) {
+        if (previousId !== nextUserId) {
+          rolesRef.current = [];
+          setRoles([]);
+          setProfile(null);
+          setActiveRoleState(null);
+        }
         if (previousId && previousId !== nextUserId) void clearCachedAuthProfile(previousId);
         lastUserId.current = nextUserId;
         const timer = setTimeout(() => {
@@ -425,6 +462,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         pendingProfileTimers.add(timer);
       } else {
         lastUserId.current = null;
+        rolesRef.current = [];
         setProfile(null);
         setRoles([]);
         setActiveRoleState(null);
