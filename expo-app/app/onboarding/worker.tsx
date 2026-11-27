@@ -336,15 +336,22 @@ export default function WorkerOnboarding() {
             {pendingSpecialtyChange && <Text style={styles.note}>طلب تحديث الاختصاصات بانتظار موافقة الإدارة. اختصاصاتك الحالية تبقى فعالة.</Text>}
             {!pendingSpecialtyChange && <Button title="إضافة أو تعديل اختصاصاتي" onPress={() => { setSpecialtyOnlyMode(true); setStatus(null); }} />}
             <Button title="تفعيل واجهة الفني والانتقال للرئيسية" onPress={async () => {
-              if (!user) return;
-              const { error } = await supabase.rpc("grant_provider_role_safe", { _role: "worker" });
-              if (error) {
-                Alert.alert("تعذر تفعيل دور الفني", "حسابك معتمد، لكن تعذر تفعيل الدور تلقائياً. تواصل مع الدعم.");
-                return;
+              if (!user || busy) return;
+              setBusy(true);
+              try {
+                const { data: roleGranted, error } = await supabase.rpc("grant_provider_role_safe", { _role: "worker" });
+                if (error) throw new Error(error.message || "تعذر التحقق من صلاحية الفني.");
+                if (roleGranted !== true) throw new Error("الإدارة اعتمدت الطلب، لكن صلاحية الفني لم تُفعّل في قاعدة البيانات بعد.");
+                // Force a fresh server read before navigation; do not let an older
+                // in-flight profile lookup replace the newly approved worker role.
+                await refresh({ force: true });
+                await setActiveRole("worker");
+                safeNavigate("/home", "replace");
+              } catch (error: any) {
+                Alert.alert("تعذر فتح واجهة الفني", error?.message || "حدّث الصفحة وحاول مرة ثانية.");
+              } finally {
+                setBusy(false);
               }
-              await refresh();
-              await setActiveRole("worker");
-              safeNavigate("/home", "replace");
             }} />
             <Button title="تواصل مع الدعم" onPress={() => router.push("/support-chat")} />
           </>
