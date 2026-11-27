@@ -175,7 +175,6 @@ TaskManager.defineTask(PROVIDER_PRESENCE_TASK, async ({ data, error }) => {
       const { error: writeError } = await (supabase as any).from("provider_presence_roles").upsert({
         user_id: context.userId,
         role: context.role,
-        status: "online",
         lat: location.coords.latitude,
         lng: location.coords.longitude,
         heading:
