@@ -255,10 +255,15 @@ export default function RequestDetail() {
   const [mapFollowEnabled, setMapFollowEnabled] = useState(true);
   const [trackingSheetExpanded, setTrackingSheetExpanded] = useState(false);
   const trackingSheetPanResponder = useRef(PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+    // Claim vertical drags on the sheet handle before the parent ScrollView does.
+    onMoveShouldSetPanResponderCapture: (_event, gesture) =>
+      Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.15,
+    onMoveShouldSetPanResponder: (_event, gesture) =>
+      Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.15,
+    onPanResponderTerminationRequest: () => false,
     onPanResponderRelease: (_event, gesture) => {
       if (gesture.dy < -24) setTrackingSheetExpanded(true);
-      if (gesture.dy > 24) setTrackingSheetExpanded(false);
+      else if (gesture.dy > 24) setTrackingSheetExpanded(false);
     },
   })).current;
   const [otherLocation, setOtherLocation] = useState<Coordinates | null>(null);
