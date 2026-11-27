@@ -45,7 +45,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
     }
     const { data: request, error: requestError } = await supabase
       .from("service_requests")
-      .select("customer_id, provider_id, status")
+      .select("customer_id, provider_id, status, type, provider_arrived_at")
       .eq("id", context.requestId)
       .maybeSingle();
     const isCorrectParticipant = request && (
@@ -53,7 +53,8 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
       (context.role === "provider" && request.provider_id === context.userId)
     );
     const isActive = request && ["accepted", "in_progress"].includes(request.status);
-    if (requestError || !isCorrectParticipant || !isActive) {
+    const serviceProviderArrived = context.role === "provider" && request?.type === "service" && Boolean(request.provider_arrived_at);
+    if (requestError || !isCorrectParticipant || !isActive || serviceProviderArrived) {
       await Location.stopLocationUpdatesAsync(LOCATION_TASK).catch(() => undefined);
       await SecureStore.deleteItemAsync(CONTEXT_KEY);
       return;
