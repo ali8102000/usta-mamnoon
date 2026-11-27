@@ -25,7 +25,7 @@ One Supabase Auth user may hold multiple provider roles. Roles are never convert
 The existing `service_requests`, `live_locations`, `trip_location_points`, and `request_navigation` tables remain in place. The route, Google Maps proxy, full-screen map, navigation lifecycle, and private Realtime topic are unchanged. Role metadata on requests and location records plus role-aware RLS policies prevent one provider role from writing another role's location or navigation data. Assigned service-team members remain recognized as `worker` members of their request.
 
 ## Database migrations applied
-The shared Supabase project's migration history is the source of truth for the database deployment. Applied migration identifiers:
+The shared Supabase project's migration history is the source of truth for the database deployment. The exact SQL files are tracked in `supabase/migrations/` in the customer/admin `mamnoon` repository and applied to the shared project. Applied migration identifiers:
 
 - `role_profiles_presence_v1`
 - `role_request_binding_v1`
