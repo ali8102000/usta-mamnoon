@@ -244,22 +244,65 @@ export default function HomeScreen() {
       const accuracy = location.coords.accuracy;
       // Keep the last good server position instead of replacing it with a weak GPS fix.
       if (!Number.isFinite(accuracy) || Number(accuracy) > 100) return;
+      const presencePayload = {
+        user_id: userId,
+        role: selectedRole,
+        lat: location.coords.latitude,
+        lng: location.coords.longitude,
+        heading:
+          location.coords.heading != null &&
+          Number.isFinite(location.coords.heading) &&
+          location.coords.heading >= 0 &&
+          location.coords.heading <= 360
+            ? location.coords.heading
+            : null,
+        accuracy_m: accuracy,
+        updated_at: new Date(location.timestamp).toISOString(),
+      };
+      // Preserve the database-owned in_trip state while refreshing GPS.
+      const { data: currentPresence, error: presenceReadError } = await (supabase as any)
+        .from("provider_presence_roles")
+        .select("status")
+        .eq("user_id", userId)
+        .eq("role", selectedRole)
+        .maybeSingle();
+      if (presenceReadError) throw presenceReadError;
+      let presenceStatus = currentPresence?.status as string | null;
+      if (!presenceStatus) {
+        const { data: activeRequest, error: activeRequestError } = await (supabase as any)
+          .from("service_requests")
+          .select("id")
+          .eq("provider_id", userId)
+          .eq("provider_role", selectedRole)
+          .in("status", ["accepted", "in_progress"])
+          .limit(1)
+          .maybeSingle();
+        if (activeRequestError) throw activeRequestError;
+        let hasActiveTrip = Boolean(activeRequest);
+        if (!hasActiveTrip && selectedRole === "worker") {
+          const { data: memberships, error: membershipError } = await (supabase as any)
+            .from("service_request_providers")
+            .select("request_id")
+            .eq("provider_id", userId)
+            .limit(50);
+          if (membershipError) throw membershipError;
+          const requestIds = (memberships ?? []).map((item: { request_id: string }) => item.request_id);
+          if (requestIds.length) {
+            const { data: activeTeamRequest, error: teamRequestError } = await (supabase as any)
+              .from("service_requests")
+              .select("id")
+              .in("id", requestIds)
+              .in("status", ["accepted", "in_progress"])
+              .limit(1)
+              .maybeSingle();
+            if (teamRequestError) throw teamRequestError;
+            hasActiveTrip = Boolean(activeTeamRequest);
+          }
+        }
+        presenceStatus = hasActiveTrip ? "in_trip" : "online";
+      }
       const { error } = await (supabase as any).from("provider_presence_roles").upsert(
-        {
-          user_id: userId,
-          role: selectedRole,
-          lat: location.coords.latitude,
-          lng: location.coords.longitude,
-          heading:
-            location.coords.heading != null &&
-            Number.isFinite(location.coords.heading) &&
-            location.coords.heading >= 0 &&
-            location.coords.heading <= 360
-              ? location.coords.heading
-              : null,
-          accuracy_m: accuracy,
-          updated_at: new Date(location.timestamp).toISOString(),
-        },
+        { ...presencePayload, status: presenceStatus },
         { onConflict: "user_id,role" },
       );
       if (error) throw error;
