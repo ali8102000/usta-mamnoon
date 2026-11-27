@@ -67,7 +67,7 @@ export default function Index() {
             ]);
         if (active) {
           const providerHomeRoute = APP_VARIANT === "worker" ? "/home" : APP_VARIANT === "driver" ? "/home" : APP_VARIANT === "large_driver" ? "/home" : "/home";
-          setNextRoute(saved ? (session ? (roles.includes("super_admin") ? "/admin/bootstrap" : providerHomeRoute) : "/auth") : "/select-governorate");
+          setNextRoute(saved ? (session ? (APP_VARIANT === "customer" && roles.includes("super_admin") ? "/admin/bootstrap" : providerHomeRoute) : "/auth") : "/select-governorate");
         }
       } catch (error) {
         console.warn("[startup] Saved governorate unavailable; opening safe selection:", error);
