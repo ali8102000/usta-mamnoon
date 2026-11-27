@@ -117,7 +117,8 @@ export default function HomeScreen() {
     let offerQuery = (supabase as any)
       .from("request_offers")
       .select("request_id, expires_at, sent_at, distance_km")
-      .eq("provider_id", user.id);
+      .eq("provider_id", user.id)
+      .eq("provider_role", selectedRole);
     // Large-vehicle requests remain visible while the customer request is
     // still open, even after dispatch marks the short offer timer as expired.
     // Providers can still accept the customer's fare or submit a fresh bid.
@@ -142,6 +143,7 @@ export default function HomeScreen() {
       .select("id, type, pickup_text, dest_text, distance_km, price_estimate, customer_payable, customer_price, vehicle_category, vehicle_type, urgency_multiplier, service_urgency_enabled, large_vehicle_urgency_enabled, taxi_urgency_enabled, taxi_urgency_percent")
       .in("id", requestIds)
       .eq("type", isDriver ? "taxi" : "service")
+      .eq("provider_role", selectedRole)
       .in("status", ["pending", "searching"])
       .order("created_at", { ascending: false })
       .limit(10);
@@ -179,7 +181,7 @@ export default function HomeScreen() {
       setProviderVehicleType(null);
       return;
     }
-    const table = (selectedRole === "driver" || selectedRole === "large_driver") ? "driver_profiles" : "worker_profiles";
+    const table = selectedRole === "large_driver" ? "naqil_profiles" : selectedRole === "driver" ? "driver_profiles" : "worker_profiles";
     // worker_profiles does not contain vehicle_type; requesting that missing
     // column makes the whole profile query fail and leaves technicians offline.
     const profileColumns = selectedRole === "worker"
@@ -235,16 +237,18 @@ export default function HomeScreen() {
     let loadedIncoming = false;
     let presenceFailureHandled = false;
     let subscription: Location.LocationSubscription | null = null;
-    const table = (selectedRole === "driver" || selectedRole === "large_driver") ? "driver_profiles" : "worker_profiles";
+    const table = selectedRole === "large_driver" ? "naqil_profiles" : selectedRole === "driver" ? "driver_profiles" : "worker_profiles";
 
     async function publishPresence(location: Location.LocationObject) {
       if (!mounted || !user) return;
       const accuracy = location.coords.accuracy;
       // Keep the last good server position instead of replacing it with a weak GPS fix.
       if (!Number.isFinite(accuracy) || Number(accuracy) > 100) return;
-      const { error } = await supabase.from("provider_presence").upsert(
+      const { error } = await supabase.from("provider_presence_roles").upsert(
         {
           user_id: userId,
+          role: selectedRole,
+          status: "online",
           lat: location.coords.latitude,
           lng: location.coords.longitude,
           heading:
@@ -257,7 +261,7 @@ export default function HomeScreen() {
           accuracy_m: accuracy,
           updated_at: new Date(location.timestamp).toISOString(),
         },
-        { onConflict: "user_id" },
+        { onConflict: "user_id,role" },
       );
       if (error) throw error;
       if (mounted && !loadedIncoming) {
@@ -272,6 +276,7 @@ export default function HomeScreen() {
       console.warn("[Mamnoon provider presence] startup/update failed:", presenceError);
       await stopProviderPresenceBackgroundLocation().catch(() => undefined);
       await supabase.from(table).update({ available: false }).eq("user_id", userId);
+      await (supabase as any).from("provider_presence_roles").update({ status: "offline" }).eq("user_id", userId).eq("role", selectedRole);
       if (!mounted) return;
       const code = presenceError instanceof Error ? presenceError.message : "";
       const message =
@@ -338,7 +343,7 @@ export default function HomeScreen() {
     }
     const previous = available;
     const next = !previous;
-    const table = (selectedRole === "driver" || selectedRole === "large_driver") ? "driver_profiles" : "worker_profiles";
+    const table = selectedRole === "large_driver" ? "naqil_profiles" : selectedRole === "driver" ? "driver_profiles" : "worker_profiles";
     setAvailabilitySaving(true);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
     Vibration.vibrate(35);
@@ -365,9 +370,11 @@ export default function HomeScreen() {
         }
         const location = await getFreshProviderLocation();
         const accuracy = location.coords.accuracy;
-        const { error: presenceError } = await supabase.from("provider_presence").upsert(
+        const { error: presenceError } = await supabase.from("provider_presence_roles").upsert(
           {
             user_id: user.id,
+            role: selectedRole,
+            status: "online",
             lat: location.coords.latitude,
             lng: location.coords.longitude,
             heading:
@@ -380,7 +387,7 @@ export default function HomeScreen() {
             accuracy_m: accuracy,
             updated_at: new Date(location.timestamp).toISOString(),
           },
-          { onConflict: "user_id" },
+          { onConflict: "user_id,role" },
         );
         if (presenceError) throw presenceError;
       }
@@ -389,6 +396,7 @@ export default function HomeScreen() {
       const { error } = await supabase.from(table).update({ available: next }).eq("user_id", user.id);
       if (error) throw error;
       setAvailable(next);
+      await (supabase as any).from("provider_presence_roles").update({ status: next ? "online" : "offline" }).eq("user_id", user.id).eq("role", selectedRole);
       if (!next) {
         await stopProviderPresenceBackgroundLocation().catch((stopError) => {
           console.warn("[Mamnoon] could not stop provider background location:", stopError);
