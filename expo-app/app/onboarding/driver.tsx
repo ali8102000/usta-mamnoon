@@ -507,7 +507,7 @@ export default function DriverOnboarding() {
           <>
           {pendingVehicleChange && <Text style={styles.note}>طلب تحديث بيانات المركبة أو مستنداتها بانتظار موافقة الإدارة. بياناتك الحالية تبقى فعالة.</Text>}
           {!pendingVehicleChange && <Button title="تحديث بيانات المركبة أو مستنداتها" onPress={() => { setVehicleChangeMode(true); setStatus(null); }} />}
-          <Button title="تفعيل دور السائق والمتابعة" onPress={async () => {
+          <Button title="تفعيل دور السائق والمتابعة" style={{ backgroundColor: "#16A34A", borderWidth: 2, borderColor: "#15803D" }} onPress={async () => {
             if (!user) return;
             setBusy(true);
             try {
@@ -688,7 +688,7 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, fontWeight: "800", color: palette.muted, textAlign: "center" },
   chipTextActive: { color: palette.brand },
   input: { minHeight: 54, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, paddingHorizontal: 16, paddingVertical: 14, fontSize: 14, color: palette.ink, backgroundColor: palette.surface, textAlign: "right" },
-  photoButton: { minHeight: 112, borderWidth: 1, borderStyle: "dashed", borderColor: palette.gold, borderRadius: radius.lg, backgroundColor: palette.surface, alignItems: "center", justifyContent: "center", padding: 12 },
-  photoText: { color: palette.brand, fontWeight: "900", textAlign: "center" },
+  photoButton: { minHeight: 112, borderWidth: 1, borderStyle: "dashed", borderColor: "#16A34A", borderRadius: radius.lg, backgroundColor: palette.surface, alignItems: "center", justifyContent: "center", padding: 12 },
+  photoText: { color: "#15803D", fontWeight: "900", textAlign: "center" },
   preview: { width: 150, height: 110, borderRadius: radius.md, resizeMode: "cover" },
 });

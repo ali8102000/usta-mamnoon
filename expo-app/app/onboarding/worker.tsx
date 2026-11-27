@@ -335,7 +335,7 @@ export default function WorkerOnboarding() {
           <>
             {pendingSpecialtyChange && <Text style={styles.note}>طلب تحديث الاختصاصات بانتظار موافقة الإدارة. اختصاصاتك الحالية تبقى فعالة.</Text>}
             {!pendingSpecialtyChange && <Button title="إضافة أو تعديل اختصاصاتي" onPress={() => { setSpecialtyOnlyMode(true); setStatus(null); }} />}
-            <Button title="تفعيل واجهة الفني والانتقال للرئيسية" onPress={async () => {
+            <Button title="تفعيل واجهة الفني والانتقال للرئيسية" style={{ backgroundColor: "#16A34A", borderWidth: 2, borderColor: "#15803D" }} onPress={async () => {
               if (!user || busy) return;
               setBusy(true);
               try {
@@ -455,7 +455,7 @@ const styles = StyleSheet.create({
   levelText: { fontSize: 14, fontWeight: "800", color: palette.muted },
   levelTextActive: { color: palette.brand },
   input: { minHeight: 54, borderWidth: 1, borderColor: palette.line, borderRadius: radius.md, paddingHorizontal: 16, paddingVertical: 14, fontSize: 14, fontWeight: "600", color: palette.ink, backgroundColor: palette.surface, textAlign: "right" },
-  photoButton: { minHeight: 112, borderWidth: 1, borderStyle: "dashed", borderColor: palette.gold, borderRadius: radius.lg, backgroundColor: palette.surface, alignItems: "center", justifyContent: "center", padding: 12 },
-  photoText: { color: palette.brand, fontWeight: "900", textAlign: "center" },
+  photoButton: { minHeight: 112, borderWidth: 1, borderStyle: "dashed", borderColor: "#16A34A", borderRadius: radius.lg, backgroundColor: palette.surface, alignItems: "center", justifyContent: "center", padding: 12 },
+  photoText: { color: "#15803D", fontWeight: "900", textAlign: "center" },
   preview: { width: 150, height: 110, borderRadius: radius.md, resizeMode: "cover" },
 });
