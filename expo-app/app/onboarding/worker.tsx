@@ -9,6 +9,7 @@ import {
   TextInput,
   Alert,
   Image,
+  Modal,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { supabase } from "@/lib/supabase";
@@ -36,6 +37,7 @@ export default function WorkerOnboarding() {
   const [facePhoto, setFacePhoto] = useState<PickedImage | null>(null);
   const [idFrontPhoto, setIdFrontPhoto] = useState<PickedImage | null>(null);
   const [idBackPhoto, setIdBackPhoto] = useState<PickedImage | null>(null);
+  const [photoToConfirm, setPhotoToConfirm] = useState<{ kind: PhotoKind; image: PickedImage; title: string } | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -172,17 +174,19 @@ export default function WorkerOnboarding() {
       const picked = { uri: asset.uri, mimeType: asset.mimeType, fileName: asset.fileName };
       const photoTitle = kind === "face" ? "الصورة الشخصية"
         : kind === "id-front" ? "البطاقة الوطنية الأمامية" : "البطاقة الوطنية الخلفية";
-      Alert.alert("تأكيد الصورة", `تم اختيار ${photoTitle}. هل تريد اعتمادها؟`, [
-        { text: "إعادة الاختيار", style: "cancel" },
-        { text: "اعتماد الصورة", onPress: () => {
-          if (kind === "face") setFacePhoto(picked);
-          else if (kind === "id-front") setIdFrontPhoto(picked);
-          else setIdBackPhoto(picked);
-        } },
-      ]);
+      setPhotoToConfirm({ kind, image: picked, title: photoTitle });
     } catch {
       Alert.alert("خطأ", "تعذر اختيار الصورة. حاول مرة أخرى.");
     }
+  }
+
+  function confirmPickedPhoto() {
+    if (!photoToConfirm) return;
+    const { kind, image } = photoToConfirm;
+    if (kind === "face") setFacePhoto(image);
+    else if (kind === "id-front") setIdFrontPhoto(image);
+    else setIdBackPhoto(image);
+    setPhotoToConfirm(null);
   }
 
   function choosePhoto(kind: PhotoKind) {
@@ -361,6 +365,7 @@ export default function WorkerOnboarding() {
   }
 
   return (
+    <>
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 48 }}>
       <Text style={styles.title}>{specialtyOnlyMode ? "تحديث اختصاصات الفني" : "تسجيل الفني في ممنون"}</Text>
       <Text style={styles.note}>{specialtyOnlyMode ? "حدد الاختصاصات التي تريد اعتمادها. اختصاصاتك الحالية تبقى فعالة حتى توافق الإدارة." : "أكمل اختصاصاتك وارفق المستمسكات الثلاثة. يبقى الحساب قيد المراجعة لحين موافقة الإدارة."}</Text>
@@ -431,6 +436,22 @@ export default function WorkerOnboarding() {
       <View style={{ height: 24 }} />
       <Button title="إرسال طلب التسجيل للمراجعة" onPress={submit} loading={busy} />
     </ScrollView>
+    <Modal visible={!!photoToConfirm} transparent animationType="fade" onRequestClose={() => setPhotoToConfirm(null)}>
+      <View style={styles.photoConfirmOverlay}>
+        <View style={styles.photoConfirmCard}>
+          <Text style={styles.photoConfirmTitle}>تأكيد الصورة</Text>
+          <Text style={styles.photoConfirmText}>{photoToConfirm ? `تم اختيار ${photoToConfirm.title}. هل تريد اعتمادها؟` : ""}</Text>
+          {photoToConfirm && <Image source={{ uri: photoToConfirm.image.uri }} style={styles.photoConfirmPreview} />}
+          <TouchableOpacity style={styles.photoConfirmAccept} onPress={confirmPickedPhoto} activeOpacity={0.85}>
+            <Text style={styles.photoConfirmAcceptText}>✓ اعتماد الصورة</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.photoConfirmCancel} onPress={() => setPhotoToConfirm(null)} activeOpacity={0.85}>
+            <Text style={styles.photoConfirmCancelText}>إعادة الاختيار</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+    </> 
   );
 }
 
@@ -458,4 +479,13 @@ const styles = StyleSheet.create({
   photoButton: { minHeight: 112, borderWidth: 1, borderStyle: "dashed", borderColor: "#16A34A", borderRadius: radius.lg, backgroundColor: palette.surface, alignItems: "center", justifyContent: "center", padding: 12 },
   photoText: { color: "#15803D", fontWeight: "900", textAlign: "center" },
   preview: { width: 150, height: 110, borderRadius: radius.md, resizeMode: "cover" },
+  photoConfirmOverlay: { flex: 1, backgroundColor: "rgba(15, 23, 42, 0.55)", alignItems: "center", justifyContent: "center", padding: 24 },
+  photoConfirmCard: { width: "100%", maxWidth: 380, backgroundColor: "#FFFFFF", borderRadius: 20, borderWidth: 2, borderColor: "#16A34A", padding: 20, gap: 12, alignItems: "center" },
+  photoConfirmTitle: { color: "#14532D", fontSize: 20, fontWeight: "900" },
+  photoConfirmText: { color: "#334155", fontSize: 14, lineHeight: 23, textAlign: "center" },
+  photoConfirmPreview: { width: 190, height: 135, borderRadius: 12, resizeMode: "cover" },
+  photoConfirmAccept: { width: "100%", minHeight: 52, borderRadius: 12, borderWidth: 2, borderColor: "#15803D", backgroundColor: "#16A34A", alignItems: "center", justifyContent: "center" },
+  photoConfirmAcceptText: { color: "#FFFFFF", fontSize: 16, fontWeight: "900" },
+  photoConfirmCancel: { width: "100%", minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: "#CBD5E1", backgroundColor: "#F8FAFC", alignItems: "center", justifyContent: "center" },
+  photoConfirmCancelText: { color: "#475569", fontSize: 14, fontWeight: "800" },
 });
