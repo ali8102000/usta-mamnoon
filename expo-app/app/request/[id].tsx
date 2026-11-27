@@ -12,6 +12,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  PanResponder,
 } from "react-native";
 import MapView, { AnimatedRegion, Marker, Polyline } from "react-native-maps";
 import { LinearGradient } from "expo-linear-gradient";
@@ -251,6 +252,14 @@ export default function RequestDetail() {
   const [chatId, setChatId] = useState<string | null>(null);
   const [myLocation, setMyLocation] = useState<Coordinates | null>(null);
   const [mapFollowEnabled, setMapFollowEnabled] = useState(true);
+  const [trackingSheetExpanded, setTrackingSheetExpanded] = useState(false);
+  const trackingSheetPanResponder = useRef(PanResponder.create({
+    onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dy < -24) setTrackingSheetExpanded(true);
+      if (gesture.dy > 24) setTrackingSheetExpanded(false);
+    },
+  })).current;
   const [otherLocation, setOtherLocation] = useState<Coordinates | null>(null);
   const [providerRoutePoints, setProviderRoutePoints] = useState<Coordinates[]>([]);
   const [roadRoutePoints, setRoadRoutePoints] = useState<Coordinates[]>([]);
@@ -316,6 +325,9 @@ export default function RequestDetail() {
     (request.type === "taxi" || request.type === "service")
   );
   const providerLiveLocation = isCustomer ? otherLocation : myLocation;
+  useEffect(() => {
+    setTrackingSheetExpanded(false);
+  }, [request?.id, request?.status]);
   const driverLocationFresh = Boolean(providerLiveLocation?.updatedAt && Number.isFinite(Date.parse(providerLiveLocation.updatedAt)) && freshnessClock - Date.parse(providerLiveLocation.updatedAt) < 25000);
   const currentUserId = user?.id;
   useEffect(() => {
@@ -1674,13 +1686,13 @@ export default function RequestDetail() {
           >
             {roadRoutePoints.length > 1 && (
               <>
-                <Polyline coordinates={roadRoutePoints} strokeColor="#FFFFFF" strokeWidth={11} lineCap="round" lineJoin="round" />
-                <Polyline coordinates={roadRoutePoints} strokeColor="#0B63CE" strokeWidth={6} lineCap="round" lineJoin="round" />
+                <Polyline coordinates={roadRoutePoints} strokeColor="#FFFFFF" strokeWidth={15} lineCap="round" lineJoin="round" />
+                <Polyline coordinates={roadRoutePoints} strokeColor="#0B63CE" strokeWidth={9} lineCap="round" lineJoin="round" />
                 {roadTrafficSegments.map((segment, index) => {
                   const segmentPoints = roadRoutePoints.slice(segment.startIndex, segment.endIndex);
                   if (segmentPoints.length < 2) return null;
                   const trafficColor = segment.speed === "TRAFFIC_JAM" ? "#DC2626" : segment.speed === "SLOW" ? "#F59E0B" : "#16A34A";
-                  return <Polyline key={index} coordinates={segmentPoints} strokeColor={trafficColor} strokeWidth={6} />;
+                  return <Polyline key={index} coordinates={segmentPoints} strokeColor={trafficColor} strokeWidth={8} />;
                 })}
               </>
             )}
@@ -1756,6 +1768,7 @@ export default function RequestDetail() {
         <View style={{ paddingHorizontal: 16, paddingVertical: 7, backgroundColor: acceptedMapMode ? "rgba(7,21,37,0.88)" : palette.surface, borderBottomWidth: 1, borderBottomColor: palette.line }}>
           <Text style={{ color: acceptedMapMode ? "#FFFFFF" : palette.ink, fontSize: 11, fontWeight: "900", textAlign: "center", writingDirection: "ltr" }}>رقم الطلب: {request.request_code || request.id.slice(0, 8).toUpperCase()}</Text>
         </View>
+        {(!acceptedMapMode || trackingSheetExpanded) && (
         <ScrollView
           ref={scrollRef}
           style={[styles.requestScroll, acceptedMapMode && styles.requestScrollOnMap]}
@@ -1764,6 +1777,12 @@ export default function RequestDetail() {
           keyboardShouldPersistTaps="handled"
           nestedScrollEnabled
         >
+        {acceptedMapMode && (
+          <TouchableOpacity activeOpacity={0.85} onPress={() => setTrackingSheetExpanded(false)} style={styles.expandedSheetHandle} {...trackingSheetPanResponder.panHandlers} accessibilityRole="button" accessibilityLabel="طي تفاصيل التتبع">
+            <View style={styles.sheetHandleBar} />
+            <Text style={styles.sheetHandleText}>اسحب للأسفل لإخفاء التفاصيل</Text>
+          </TouchableOpacity>
+        )}
         {acceptedMapMode && (
           <View style={styles.mapLiveBadge}>
             <View style={styles.mapLiveDot} />
@@ -2258,6 +2277,22 @@ export default function RequestDetail() {
           </View>
         )}
         </ScrollView>
+        )}
+        {acceptedMapMode && !trackingSheetExpanded && (
+          <View style={styles.collapsedTrackingSheet} {...trackingSheetPanResponder.panHandlers}>
+            <TouchableOpacity activeOpacity={0.9} onPress={() => setTrackingSheetExpanded(true)} style={styles.collapsedSheetTouch} accessibilityRole="button" accessibilityLabel="فتح تفاصيل التتبع">
+              <View style={styles.sheetHandleBar} />
+              <View style={styles.collapsedSheetRow}>
+                <View style={styles.mapLiveDot} />
+                <Text style={styles.collapsedSheetTitle}>التتبع المباشر</Text>
+                <Text style={styles.collapsedSheetStatus} numberOfLines={1}>
+                  {request.type === "taxi" && request.status === "in_progress" ? "الرحلة مستمرة" : driverEtaMinutes != null ? `الوصول خلال ${driverEtaMinutes} دقيقة` : driverLocationFresh ? "الموقع يتحدث مباشرة" : "بانتظار تحديث الموقع"}
+                </Text>
+                <Text style={styles.collapsedSheetArrow}>⌃</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+        )}
         {showCancelSheet && (
           <View style={styles.cancelOverlay}>
             <View style={styles.cancelCard}>
@@ -2365,6 +2400,15 @@ const styles = StyleSheet.create({
   fullScreenTrackingMap: { ...StyleSheet.absoluteFillObject, zIndex: 0 },
   headerOnMap: { backgroundColor: "rgba(255,255,255,0.94)", borderBottomColor: "rgba(15,23,42,0.10)", elevation: 4 },
   requestScrollOnMap: { position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "38%", backgroundColor: "rgba(255,255,255,0.96)", borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: "hidden", elevation: 8 },
+  collapsedTrackingSheet: { position: "absolute", left: 0, right: 0, bottom: 0, minHeight: 70, backgroundColor: "rgba(255,255,255,0.98)", borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 10, elevation: 12, shadowColor: "#000", shadowOpacity: 0.14, shadowRadius: 8, shadowOffset: { width: 0, height: -3 } },
+  collapsedSheetTouch: { gap: 8 },
+  collapsedSheetRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  collapsedSheetTitle: { color: palette.ink, fontSize: 12, fontWeight: "900" },
+  collapsedSheetStatus: { color: palette.muted, fontSize: 11, fontWeight: "700", flex: 1, textAlign: "right" },
+  collapsedSheetArrow: { color: palette.brand, fontSize: 23, fontWeight: "900", marginTop: -5 },
+  expandedSheetHandle: { alignItems: "center", paddingTop: 9, paddingBottom: 5 },
+  sheetHandleBar: { width: 42, height: 5, borderRadius: 3, backgroundColor: "#94A3B8" },
+  sheetHandleText: { color: palette.muted, fontSize: 9, fontWeight: "700", marginTop: 4 },
   mapLiveBadge: { flexDirection: "row", alignItems: "center", alignSelf: "center", gap: 7, marginTop: 10, marginBottom: 3, paddingHorizontal: 13, paddingVertical: 8, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.96)", borderWidth: 1, borderColor: palette.line, elevation: 3 },
   mapLiveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: palette.success },
   mapLiveBadgeTitle: { color: palette.ink, fontSize: 11, fontWeight: "900" },
@@ -2404,9 +2448,9 @@ const styles = StyleSheet.create({
   trackingTitle: { fontSize: 15, fontWeight: "900", color: palette.ink, marginBottom: 10 },
   trackingMap: { height: 220, borderRadius: radius.md },
   trackingMapTaxi: { height: 340 },
-  endpointPin: { width: 30, height: 38, alignItems: "center", justifyContent: "flex-start", paddingTop: 4, backgroundColor: "#17324D", borderRadius: 16, borderBottomLeftRadius: 4, transform: [{ rotate: "-45deg" }], borderWidth: 2, borderColor: "#FFFFFF", elevation: 7 },
-  endpointPinCore: { width: 14, height: 14, borderRadius: 7, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  endpointPinDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#D6A43B" },
+  endpointPin: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(37,99,235,0.18)", borderWidth: 1.5, borderColor: "rgba(37,99,235,0.45)", elevation: 7 },
+  endpointPinCore: { width: 18, height: 18, borderRadius: 9, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#2563EB" },
+  endpointPinDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#2563EB" },
   destinationPin: { width: 34, height: 42, alignItems: "center", justifyContent: "flex-start", paddingTop: 5, borderRadius: 18, borderBottomLeftRadius: 4, transform: [{ rotate: "-45deg" }], borderWidth: 2.5, borderColor: "#FFFFFF", elevation: 10, shadowColor: "#9F1239", shadowOpacity: 0.35, shadowRadius: 5, shadowOffset: { width: 0, height: 3 }, overflow: "hidden" },
   destinationPinCore: { width: 16, height: 16, borderRadius: 8, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
   destinationPinDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#C62828" },
