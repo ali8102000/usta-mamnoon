@@ -351,7 +351,7 @@ export default function ProfileScreen() {
               try {
                 if (activeRole === "driver" || activeRole === "large_driver" || activeRole === "worker") {
                   const table = activeRole === "worker" ? "worker_profiles" : activeRole === "large_driver" ? "naqil_profiles" : "driver_profiles";
-                  const { error } = await supabase.from(table).update({ available: false }).eq("user_id", user.id);
+                  const { error } = await (supabase as any).from(table).update({ available: false }).eq("user_id", user.id);
                   if (error) throw error;
                 }
                 await setActiveRole(r);
