@@ -235,7 +235,7 @@ export default function LiveNavigationScreen(props: Props) {
         request_id: props.requestId, route_phase: "service_work", updated_by: data.user?.id,
         route_points: [], route_steps: [], eta_minutes: 0, distance_meters: 0,
         updated_at: new Date().toISOString(),
-      }, { onConflict: "request_id" });
+      }, { onConflict: "request_id" }));
     } else if ((props.role === "captain" || props.role === "naqil") && phase === "to_pickup") {
       setPhase("to_destination");
       lastRoutePoint.current = null;
