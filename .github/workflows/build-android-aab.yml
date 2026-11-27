@@ -110,6 +110,8 @@ jobs:
 
       - name: Build signed Android App Bundle
         working-directory: expo-app/android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/mamnoon-upload-key.jks
         run: ./gradlew bundleRelease --no-daemon
 
       - name: Verify AAB signature and package
