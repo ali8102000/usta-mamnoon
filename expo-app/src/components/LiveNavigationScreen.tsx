@@ -85,7 +85,6 @@ export default function LiveNavigationScreen(props: Props) {
     // يحفظ المزود بيانات الطريق في الجدول المنفصل؛ الزبون يقرأها فقط.
     if (providerMode) {
       const { data: authData } = await supabase.auth.getUser();
-      const { data: authData } = await supabase.auth.getUser();
       await supabase.from("request_navigation").upsert({
         request_id: props.requestId,
         route_phase: phase,
