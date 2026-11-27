@@ -667,6 +667,12 @@ export default function RequestDetail() {
 
   useEffect(() => {
     if (!isActive || !currentUserId) return;
+    if (isProvider && request?.type === "service" && request.provider_arrived_at) {
+      void import("@/lib/background-location")
+        .then(({ stopMamnoonBackgroundLocation }) => stopMamnoonBackgroundLocation())
+        .catch((error) => console.warn("[Mamnoon] could not stop service navigation tracking:", error));
+      return;
+    }
     let mounted = true;
     let subscription: Location.LocationSubscription | null = null;
     const role = isCustomer ? "customer" : "provider";
@@ -766,7 +772,7 @@ export default function RequestDetail() {
       mounted = false;
       subscription?.remove();
     };
-  }, [id, isActive, isCustomer, currentUserId]);
+  }, [id, isActive, isCustomer, isProvider, currentUserId, request?.type, request?.provider_arrived_at]);
 
   useEffect(() => {
     if (isActive) return;
@@ -894,6 +900,15 @@ export default function RequestDetail() {
       setLiveRouteSource(null);
       return;
     }
+    if (request?.type === "service" && request.provider_arrived_at) {
+      roadRouteSequenceRef.current += 1;
+      hasValidRoadRouteRef.current = false;
+      setRoadRoutePoints([]);
+      setRoadTrafficSegments([]);
+      setNextRouteInstruction(null);
+      setLiveRouteSource(null);
+      return;
+    }
     // A short GPS/network gap should not erase the last confirmed road route.
     if (!providerLiveLocation || !driverLocationFresh) return;
     // The provider always routes to the saved work/pickup point for a service.
@@ -991,6 +1006,7 @@ export default function RequestDetail() {
     isCustomer,
     request?.type,
     request?.status,
+    request?.provider_arrived_at,
     request?.dest_lat,
     request?.dest_lng,
     request?.pickup_lat,
@@ -1059,7 +1075,7 @@ export default function RequestDetail() {
 
   // Keep the active provider centered during navigation; user panning pauses follow mode.
   useEffect(() => {
-    if (!acceptedMapMode || !mapFollowEnabled || !driverLocationFresh || !providerLiveLocation || !acceptedMapRef.current) return;
+    if (!acceptedMapMode || !mapFollowEnabled || !driverLocationFresh || (request?.type === "service" && request.provider_arrived_at) || !providerLiveLocation || !acceptedMapRef.current) return;
     acceptedMapRef.current.animateCamera({
       center: {
         latitude: providerLiveLocation.latitude,
@@ -1077,6 +1093,8 @@ export default function RequestDetail() {
     providerLiveLocation?.longitude,
     providerLiveLocation?.heading,
     driverLocationFresh,
+    request?.type,
+    request?.provider_arrived_at,
   ]);
 
   useEffect(() => {
