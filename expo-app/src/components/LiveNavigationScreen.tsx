@@ -103,7 +103,7 @@ export default function LiveNavigationScreen(props: Props) {
   // استقبال بث المركبة وبيانات الطريق عند الزبون، من دون استدعاء Google من جهازه.
   useEffect(() => {
     const channel = supabase.channel(`trip_tracking:${props.requestId}`, {
-      config: { broadcast: { self: false } },
+      config: { private: true, broadcast: { self: false } },
     });
     channelRef.current = channel;
     channel.on("broadcast", { event: "location" }, ({ payload }) => {
