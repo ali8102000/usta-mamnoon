@@ -43,7 +43,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
       await SecureStore.deleteItemAsync(CONTEXT_KEY);
       return;
     }
-    const { data: request, error: requestError } = await supabase
+    const { data: request, error: requestError } = await (supabase as any)
       .from("service_requests")
       .select("customer_id, provider_id, provider_role, status, type, provider_arrived_at")
       .eq("id", context.requestId)
@@ -61,7 +61,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
     }
     const locations = (data as { locations?: Location.LocationObject[] }).locations ?? [];
     for (const location of locations) {
-      const { error: writeError } = await supabase.from("live_locations").upsert({
+      const { error: writeError } = await (supabase as any).from("live_locations").upsert({
         request_id: context.requestId,
         user_id: context.userId,
         role: context.role,
@@ -81,7 +81,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
         // Foreground GPS already records denser breadcrumbs (8 m / 10 s).
         // Background tracking adds a point only after a larger movement or
         // a longer gap, avoiding near-duplicate route points while both run.
-        const { data: lastPoint, error: lastPointError } = await supabase
+        const { data: lastPoint, error: lastPointError } = await (supabase as any)
           .from("trip_location_points")
           .select("lat,lng,recorded_at")
           .eq("request_id", context.requestId)
@@ -104,7 +104,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
               )
             : Number.POSITIVE_INFINITY;
           if (!lastPoint || distance >= 25 || elapsed >= 30_000) {
-            const { error: pointError } = await supabase.from("trip_location_points").insert({
+            const { error: pointError } = await (supabase as any).from("trip_location_points").insert({
               request_id: context.requestId,
               user_id: context.userId,
               role: context.role,
