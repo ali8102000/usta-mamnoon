@@ -36,7 +36,7 @@ export default function LiveNavigationScreen(props: Props) {
   const mapRef = useRef<MapView>(null);
   const providerMode = props.role !== "customer";
   const [route, setRoute] = useState<RouteResult | null>(null);
-  const [phase, setPhase] = useState(props.initialPhase ?? "to_pickup");
+  const [phase, setPhase] = useState<"to_pickup" | "to_destination" | "service_work" | "to_workshop" | "completed">(props.initialPhase ?? "to_pickup");
   const [live, setLive] = useState<LatLng | null>(null);
   const [heading, setHeading] = useState(0);
   const [street, setStreet] = useState("");
@@ -116,7 +116,7 @@ export default function LiveNavigationScreen(props: Props) {
       setDistance(Number(payload.distance_meters ?? 0));
       setStreet(String(payload.current_street ?? ""));
       setManeuver(String(payload.next_maneuver ?? ""));
-      animatedCoordinate.timing({ ...point, duration: 2800, useNativeDriver: false }).start();
+      animatedCoordinate.timing({ ...point, latitudeDelta: 0.01, longitudeDelta: 0.01, toValue: 0, duration: 2800, useNativeDriver: false }).start();
     });
     channel.subscribe();
     return () => {
@@ -186,7 +186,7 @@ export default function LiveNavigationScreen(props: Props) {
         const course = Number(position.coords.heading ?? 0);
         setLive(point);
         setHeading(course);
-        animatedCoordinate.timing({ ...point, duration: 2600, useNativeDriver: false }).start();
+        animatedCoordinate.timing({ ...point, latitudeDelta: 0.01, longitudeDelta: 0.01, toValue: 0, duration: 2600, useNativeDriver: false }).start();
 
         const now = Date.now();
         if (now - lastBroadcastAt.current >= 3000) {
@@ -307,7 +307,7 @@ export default function LiveNavigationScreen(props: Props) {
         <Marker coordinate={props.pickup} title="موقع الاستلام"><View style={styles.pin}><Text>🟢</Text></View></Marker>
         <Marker coordinate={props.destination} title="الوجهة"><View style={styles.pin}><Text>🏁</Text></View></Marker>
         {(providerMode ? live : live) && (
-          <Marker.Animated coordinate={animatedCoordinate} flat={true} anchor={{ x: 0.5, y: 0.5 }}>
+          <Marker.Animated coordinate={animatedCoordinate as any} flat={true} anchor={{ x: 0.5, y: 0.5 }}>
             <View style={styles.vehicle}><Text style={{ fontSize: 27 }}>{icon}</Text></View>
           </Marker.Animated>
         )}
