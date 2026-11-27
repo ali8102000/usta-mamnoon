@@ -13,6 +13,7 @@ const images: Record<string, ImageSourcePropType> = {
   electric_setup: require("../../assets/services/electric_setup.jpg"),
   electric_street: require("../../assets/services/electric_street.jpg"),
   washer_repair: require("../../assets/services/washer_repair.jpg"),
+  car_repair: { uri: "https://raw.githubusercontent.com/ali8102000/mamnoon/main/expo-app/assets/services/car_repair.jpg" },
   stove_repair: require("../../assets/services/stove_repair.jpg"),
   fridge_repair: require("../../assets/services/fridge_repair.jpg"),
   ac_repair: require("../../assets/services/ac_repair.jpg"),

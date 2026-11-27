@@ -7,7 +7,7 @@ const SERVICES = [
   ["plumbing","سباكة"],["electric_setup","كهرباء"],["electric_street","كهربائي"],["washer_repair","غسالات"],["stove_repair","طباخات"],
   ["fridge_repair","ثلاجات"],["ac_repair","تبريد"],["cleaning","تنظيف"],["wood_carpentry","نجارة خشب"],["blacksmith","حداد"],
   ["goods_transport","نقل بضائع"],["furniture_moving","نقل أثاث"],["cargo_handling","تحميل"],["gardener","حدائق"],["internet_install","إنترنت"],
-  ["phone_repair","موبايلات"],["electronics_repair","إلكترونيات"],["computer_repair","حاسبات"],["security_cameras","كاميرات"],["general","خدمات عامة"],
+  ["car_repair","تصليح سيارات"],["phone_repair","موبايلات"],["electronics_repair","إلكترونيات"],["computer_repair","حاسبات"],["security_cameras","كاميرات"],["general","خدمات عامة"],
 ] as const;
 
 export function ServiceIconPanorama() {

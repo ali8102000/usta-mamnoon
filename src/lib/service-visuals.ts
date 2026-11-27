@@ -36,6 +36,7 @@ const serviceIcons: Record<string, string> = {
   electric_setup: electricSetup,
   electric_street: electricStreet,
   washer_repair: washer,
+  car_repair: "https://raw.githubusercontent.com/ali8102000/mamnoon/main/src/assets/service-car_repair.jpg",
   stove_repair: stove,
   fridge_repair: fridge,
   ac_repair: ac_repair,

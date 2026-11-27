@@ -22,6 +22,7 @@ import { palette, radius } from "@/styles/theme";
 
 type WorkerService = { id: string; slug: string; name_ar: string };
 const EXPERT_ONLY_SERVICE_SLUGS = new Set(["build", "plaster", "carpentry_form", "flooring", "chef", "plumbing", "electric_setup", "electric_street"]);
+const FANI_ONLY_SERVICE_SLUGS = new Set(["car_repair"]);
 type PickedImage = { uri: string; mimeType?: string | null; fileName?: string | null };
 type PhotoKind = "face" | "id-front" | "id-back";
 
@@ -50,7 +51,8 @@ function WorkerOnboardingScreen() {
   const [approvedWorkerRole, setApprovedWorkerRole] = useState(false);
   const [specialtyOnlyMode, setSpecialtyOnlyMode] = useState(false);
   const [pendingSpecialtyChange, setPendingSpecialtyChange] = useState(false);
-  const canOfferExpertLevel = services.some((service) => selected.includes(service.id) && EXPERT_ONLY_SERVICE_SLUGS.has(service.slug));
+  const hasFaniOnlyService = services.some((service) => selected.includes(service.id) && FANI_ONLY_SERVICE_SLUGS.has(service.slug));
+  const canOfferExpertLevel = !hasFaniOnlyService && services.some((service) => selected.includes(service.id) && EXPERT_ONLY_SERVICE_SLUGS.has(service.slug));
 
   useEffect(() => {
     if (!canOfferExpertLevel && level === "khabir") setLevel("fani");
