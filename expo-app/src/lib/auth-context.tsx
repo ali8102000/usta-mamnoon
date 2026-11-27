@@ -156,13 +156,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error("جلسة الدخول غير موجودة. سجّل الدخول من جديد.");
     }
 
-    // A provider may reach this action immediately after administrator approval,
-    // while the in-memory role snapshot is still one refresh behind. Revalidate
-    // the worker role against both server records before allowing activation.
-    if (!roles.includes(role)) {
-      if (role !== "worker" || APP_VARIANT !== "worker") {
-        throw new Error("هذا الدور غير مرتبط بحسابك.");
-      }
+    // Always revalidate the worker role against both server records before
+    // activation. The roles array captured by this screen can be older than a
+    // refresh that completes immediately before navigation.
+    if (role === "worker" && APP_VARIANT === "worker") {
       const [workerProfile, workerRole] = await Promise.all([
         supabase.from("worker_profiles").select("status").eq("user_id", uid).maybeSingle(),
         supabase.from("user_roles").select("role").eq("user_id", uid).eq("role", "worker").maybeSingle(),
@@ -178,6 +175,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setRoles((current) => filterRolesForApp(
         current.includes("worker") ? current : [...current, "worker"],
       ) as AppRole[]);
+    } else if (!roles.includes(role)) {
+      throw new Error("هذا الدور غير مرتبط بحسابك.");
     }
 
     // Invalidate any pending role restore immediately, before asynchronous
