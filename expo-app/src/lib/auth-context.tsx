@@ -33,7 +33,7 @@ interface AuthCtx {
   activeRole: AppRole | null;
   setActiveRole: (role: AppRole) => Promise<void>;
   loading: boolean;
-  refresh: () => Promise<void>;
+  refresh: (options?: { force?: boolean }) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -151,13 +151,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function setActiveRole(role: AppRole) {
-    if (!roles.includes(role)) {
-      throw new Error("هذا الدور غير مرتبط بحسابك.");
-    }
-
     const uid = session?.user.id;
     if (!uid) {
       throw new Error("جلسة الدخول غير موجودة. سجّل الدخول من جديد.");
+    }
+
+    // A provider may reach this action immediately after administrator approval,
+    // while the in-memory role snapshot is still one refresh behind. Revalidate
+    // the worker role against both server records before allowing activation.
+    if (!roles.includes(role)) {
+      if (role !== "worker" || APP_VARIANT !== "worker") {
+        throw new Error("هذا الدور غير مرتبط بحسابك.");
+      }
+      const [workerProfile, workerRole] = await Promise.all([
+        supabase.from("worker_profiles").select("status").eq("user_id", uid).maybeSingle(),
+        supabase.from("user_roles").select("role").eq("user_id", uid).eq("role", "worker").maybeSingle(),
+      ]);
+      if (
+        workerProfile.error ||
+        workerRole.error ||
+        workerProfile.data?.status !== "approved" ||
+        !workerRole.data
+      ) {
+        throw new Error("لم يكتمل تفعيل صلاحية الفني بعد. حدّث الحالة وحاول مرة ثانية.");
+      }
+      setRoles((current) => filterRolesForApp(
+        current.includes("worker") ? current : [...current, "worker"],
+      ) as AppRole[]);
     }
 
     // Invalidate any pending role restore immediately, before asynchronous
@@ -301,10 +321,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Keep the context refresh function referentially stable. Screens use it
   // in effects; recreating it on every render can create an endless refresh loop.
   const refreshInFlight = useRef<Promise<void> | null>(null);
-  const refresh = useCallback((): Promise<void> => {
-    if (refreshInFlight.current) return refreshInFlight.current;
+  const refresh = useCallback((options?: { force?: boolean }): Promise<void> => {
+    if (refreshInFlight.current && !options?.force) return refreshInFlight.current;
 
     const operation = (async () => {
+      // A forced refresh is used after an admin-approved provider activates
+      // their dashboard. Wait for any older bootstrap to finish, then perform
+      // a new profile/role read so stale in-flight data cannot undo approval.
+      if (options?.force) {
+        const previousRefresh = refreshInFlight.current;
+        if (previousRefresh) await previousRefresh.catch(() => undefined);
+        const uid = lastUserId.current;
+        if (uid) {
+          const previousProfileLoad = profileLoadInFlight.current.get(uid);
+          if (previousProfileLoad) await previousProfileLoad.catch(() => undefined);
+          if (lastUserId.current === uid) await loadProfile(uid);
+          return;
+        }
+      }
+
       const revisionAtStart = authRevision.current;
       try {
         const { data, error } = await withStartupTimeout(supabase.auth.getSession(), 12000, "auth_session_restore_timeout");
