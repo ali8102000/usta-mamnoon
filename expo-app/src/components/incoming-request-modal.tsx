@@ -116,8 +116,9 @@ export function IncomingRequestModal() {
     }
     const { data, error } = await (supabase as any)
       .from("request_offers")
-      .select("id, request_id, distance_km, expires_at, service_requests!inner(id, type, status, vehicle_category, vehicle_type, pickup_text, dest_text, notes, attachment_path, work_description, price_estimate, customer_price, pricing_mode, work_hours, workers_count, service_urgency_enabled, large_vehicle_urgency_enabled, taxi_urgency_enabled, taxi_urgency_percent, service_id, services(name_ar, slug, icon))")
+      .select("id, request_id, provider_role, distance_km, expires_at, service_requests!inner(id, type, status, provider_role, vehicle_category, vehicle_type, pickup_text, dest_text, notes, attachment_path, work_description, price_estimate, customer_price, pricing_mode, work_hours, workers_count, service_urgency_enabled, large_vehicle_urgency_enabled, taxi_urgency_enabled, taxi_urgency_percent, service_id, services(name_ar, slug, icon))")
       .eq("provider_id", user.id)
+      .eq("provider_role", activeRole)
       .eq("status", "pending")
       .is("proposed_price", null)
       .gt("expires_at", new Date().toISOString())

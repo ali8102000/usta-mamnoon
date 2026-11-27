@@ -12,6 +12,8 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  PanResponder,
+  Modal,
 } from "react-native";
 import MapView, { AnimatedRegion, Marker, Polyline } from "react-native-maps";
 import { LinearGradient } from "expo-linear-gradient";
@@ -92,6 +94,7 @@ type RequestRecord = {
   urgency_multiplier?: number | null;
   urgency_percent?: number | null;
   provider_id: string | null;
+  provider_role?: "driver" | "large_driver" | "worker" | null;
   customer_id: string;
   status: string;
   type: string;
@@ -231,7 +234,7 @@ function DestinationMarker({ coordinate }: { coordinate: Coordinates }) {
 
 export default function RequestDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { user, roles } = useAuth();
+  const { user, roles, activeRole } = useAuth();
   const [request, setRequest] = useState<RequestRecord | null>(null);
   const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
   const [otherProfile, setOtherProfile] = useState<{ full_name: string | null; avatar_url: string | null; phone: string | null } | null>(null);
@@ -250,6 +253,20 @@ export default function RequestDetail() {
   const [retryingLargeOffers, setRetryingLargeOffers] = useState(false);
   const [chatId, setChatId] = useState<string | null>(null);
   const [myLocation, setMyLocation] = useState<Coordinates | null>(null);
+  const [mapFollowEnabled, setMapFollowEnabled] = useState(true);
+  const [trackingSheetExpanded, setTrackingSheetExpanded] = useState(false);
+  const trackingSheetPanResponder = useRef(PanResponder.create({
+    // Claim vertical drags on the sheet handle before the parent ScrollView does.
+    onMoveShouldSetPanResponderCapture: (_event, gesture) =>
+      Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.15,
+    onMoveShouldSetPanResponder: (_event, gesture) =>
+      Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.15,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dy < -24) setTrackingSheetExpanded(true);
+      else if (gesture.dy > 24) setTrackingSheetExpanded(false);
+    },
+  })).current;
   const [otherLocation, setOtherLocation] = useState<Coordinates | null>(null);
   const [providerRoutePoints, setProviderRoutePoints] = useState<Coordinates[]>([]);
   const [roadRoutePoints, setRoadRoutePoints] = useState<Coordinates[]>([]);
@@ -300,7 +317,7 @@ export default function RequestDetail() {
   const [serviceProviders, setServiceProviders] = useState<any[]>([]);
   const scrollRef = useRef<ScrollView>(null);
   const weeklyRatingNoticeRef = useRef<string | null>(null);
-  const isProvider = request?.provider_id === user?.id || serviceProviders.some((member) => member.provider_id === user?.id);
+  const isProvider = (request?.provider_id === user?.id && request?.provider_role === activeRole) || (activeRole === "worker" && serviceProviders.some((member) => member.provider_id === user?.id));
   const isCustomer = request?.customer_id === user?.id;
   const canAccept = Boolean(
     request &&
@@ -315,6 +332,9 @@ export default function RequestDetail() {
     (request.type === "taxi" || request.type === "service")
   );
   const providerLiveLocation = isCustomer ? otherLocation : myLocation;
+  useEffect(() => {
+    setTrackingSheetExpanded(false);
+  }, [request?.id, request?.status]);
   const driverLocationFresh = Boolean(providerLiveLocation?.updatedAt && Number.isFinite(Date.parse(providerLiveLocation.updatedAt)) && freshnessClock - Date.parse(providerLiveLocation.updatedAt) < 25000);
   const currentUserId = user?.id;
   useEffect(() => {
@@ -356,7 +376,7 @@ export default function RequestDetail() {
       ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving&dir_action=navigate`
       : app === "waze"
         ? `https://waze.com/ul?ll=${encodeURIComponent(destination)}&navigate=yes`
-        : `https://map.darbuna.app/pin/${latitude},${longitude},17z`;
+        : `https://map.darbuna.app/pin/${destination},17z`;
 
     void Linking.openURL(url).catch((error) => {
       console.warn("[taxi navigation] unable to open navigation app:", error);
@@ -431,10 +451,10 @@ export default function RequestDetail() {
   }, []);
 
   const loadRequest = useCallback(async () => {
-    const { data, error } = await supabase
+    const { data, error } = await (supabase as any)
       .from("service_requests")
       .select(
-        "id, provider_id, customer_id, status, type, pickup_text, dest_text, price_estimate, customer_payable, payment_method, customer_price, pricing_mode, work_hours, work_description, workers_count, taxi_urgency_enabled, taxi_urgency_percent, services(name_ar, slug), pickup_lat, pickup_lng, dest_lat, dest_lng, vehicle_category, vehicle_type, notes, attachment_path, created_at, searching_started_at, provider_arrived_at, cancellation_reason, distance_km, urgency_base_price, urgency_multiplier, urgency_percent, urgency_amount, staffing_search_paused_at, cash_change_iqd",
+        "id, provider_id, provider_role, customer_id, status, type, pickup_text, dest_text, price_estimate, customer_payable, payment_method, customer_price, pricing_mode, work_hours, work_description, workers_count, taxi_urgency_enabled, taxi_urgency_percent, services(name_ar, slug), pickup_lat, pickup_lng, dest_lat, dest_lng, vehicle_category, vehicle_type, notes, attachment_path, created_at, searching_started_at, provider_arrived_at, cancellation_reason, distance_km, urgency_base_price, urgency_multiplier, urgency_percent, urgency_amount, staffing_search_paused_at, cash_change_iqd",
       )
       .eq("id", id)
       .maybeSingle();
@@ -458,7 +478,31 @@ export default function RequestDetail() {
         .select("provider_id,team_size,accepted_at")
         .eq("request_id", id)
         .order("accepted_at", { ascending: true });
-      if (!membersError) setServiceProviders(members ?? []);
+      if (membersError) {
+        console.warn("[service request providers] membership read failed; using assigned-provider fallback:", membersError.message);
+      }
+      const normalizedMembers = [...(members ?? [])];
+      // The primary provider is also the accepted service provider. Keep the
+      // customer-facing headcount correct if membership visibility lags or its
+      // SELECT policy temporarily prevents the row from being returned.
+      if (data?.provider_id && !normalizedMembers.some((member: any) => member.provider_id === data.provider_id)) {
+        let primaryTeamSize = 1;
+        const { data: primaryWorker } = await (supabase as any)
+          .from("worker_profiles")
+          .select("team_size")
+          .eq("user_id", data.provider_id)
+          .maybeSingle();
+        const savedTeamSize = Number(primaryWorker?.team_size);
+        if (Number.isFinite(savedTeamSize) && savedTeamSize >= 1) {
+          primaryTeamSize = Math.min(10, Math.floor(savedTeamSize));
+        }
+        normalizedMembers.push({
+          provider_id: data.provider_id,
+          team_size: primaryTeamSize,
+          accepted_at: data.accepted_at ?? null,
+        });
+      }
+      setServiceProviders(normalizedMembers);
     } else {
       setServiceProviders([]);
     }
@@ -666,6 +710,12 @@ export default function RequestDetail() {
 
   useEffect(() => {
     if (!isActive || !currentUserId) return;
+    if (isProvider && request?.type === "service" && request.provider_arrived_at) {
+      void import("@/lib/background-location")
+        .then(({ stopMamnoonBackgroundLocation }) => stopMamnoonBackgroundLocation())
+        .catch((error) => console.warn("[Mamnoon] could not stop service navigation tracking:", error));
+      return;
+    }
     let mounted = true;
     let subscription: Location.LocationSubscription | null = null;
     const role = isCustomer ? "customer" : "provider";
@@ -683,10 +733,11 @@ export default function RequestDetail() {
       };
       setMyLocation(coords);
 
-      const { error } = await supabase.from("live_locations").upsert({
+      const { error } = await (supabase as any).from("live_locations").upsert({
         request_id: id,
         user_id: currentUserId,
         role,
+        provider_role: role === "provider" ? activeRole : null,
         lat: latitude,
         lng: longitude,
         heading: location.coords.heading,
@@ -709,10 +760,11 @@ export default function RequestDetail() {
           : Number.POSITIVE_INFINITY;
         if (!previous || distance >= 8 || elapsed >= 10000) {
           lastRoutePointRef.current = { latitude, longitude, timestamp: Date.now() };
-          const { error: pointError } = await supabase.from("trip_location_points").insert({
+          const { error: pointError } = await (supabase as any).from("trip_location_points").insert({
             request_id: id,
             user_id: currentUserId,
             role: "provider",
+            provider_role: activeRole,
             lat: latitude,
             lng: longitude,
             heading: location.coords.heading,
@@ -742,7 +794,7 @@ export default function RequestDetail() {
 
         const { startMamnoonBackgroundLocation } = await import("@/lib/background-location");
         try {
-          await startMamnoonBackgroundLocation({ requestId: id, userId: currentUserId, role });
+          await startMamnoonBackgroundLocation({ requestId: id, userId: currentUserId, role, providerRole: role === "provider" && (activeRole === "driver" || activeRole === "large_driver" || activeRole === "worker") ? activeRole : null });
         } catch (backgroundError: any) {
           console.warn("[Mamnoon] background tracking unavailable; foreground tracking remains active:", backgroundError);
           if (mounted && backgroundError?.message === "background_location_denied") {
@@ -765,7 +817,7 @@ export default function RequestDetail() {
       mounted = false;
       subscription?.remove();
     };
-  }, [id, isActive, isCustomer, currentUserId]);
+  }, [id, isActive, isCustomer, isProvider, currentUserId, request?.type, request?.provider_arrived_at]);
 
   useEffect(() => {
     if (isActive) return;
@@ -806,6 +858,7 @@ export default function RequestDetail() {
           const row = payload.new as { user_id?: string; lat?: number; lng?: number; heading?: number | null; updated_at?: string };
           if (
             row.user_id === otherId &&
+            (isCustomer || (row as any).provider_role === request?.provider_role) &&
             typeof row.lat === "number" &&
             typeof row.lng === "number"
           ) {
@@ -893,6 +946,15 @@ export default function RequestDetail() {
       setLiveRouteSource(null);
       return;
     }
+    if (request?.type === "service" && request.provider_arrived_at) {
+      roadRouteSequenceRef.current += 1;
+      hasValidRoadRouteRef.current = false;
+      setRoadRoutePoints([]);
+      setRoadTrafficSegments([]);
+      setNextRouteInstruction(null);
+      setLiveRouteSource(null);
+      return;
+    }
     // A short GPS/network gap should not erase the last confirmed road route.
     if (!providerLiveLocation || !driverLocationFresh) return;
     // The provider always routes to the saved work/pickup point for a service.
@@ -932,7 +994,7 @@ export default function RequestDetail() {
         )
       : Number.POSITIVE_INFINITY;
     if (previousRouteRequest && previousRouteRequest.routeKey === routeKey &&
-        movedMeters < 15 && Date.now() - previousRouteRequest.requestedAt < 8000) return;
+        movedMeters < 50 && Date.now() - previousRouteRequest.requestedAt < 30000) return;
 
     const sequence = ++roadRouteSequenceRef.current;
     const timeout = setTimeout(() => {
@@ -990,6 +1052,7 @@ export default function RequestDetail() {
     isCustomer,
     request?.type,
     request?.status,
+    request?.provider_arrived_at,
     request?.dest_lat,
     request?.dest_lng,
     request?.pickup_lat,
@@ -1056,6 +1119,33 @@ export default function RequestDetail() {
     roadRoutePoints,
   ]);
 
+  // Keep the active provider centered during navigation; user panning pauses follow mode.
+  useEffect(() => {
+    if (!acceptedMapMode || !mapFollowEnabled || !driverLocationFresh || (request?.type === "service" && request.provider_arrived_at) || !providerLiveLocation || !acceptedMapRef.current) return;
+    acceptedMapRef.current.animateCamera({
+      center: {
+        latitude: providerLiveLocation.latitude,
+        longitude: providerLiveLocation.longitude,
+      },
+      heading: isCustomer ? 0 : Number(providerLiveLocation.heading ?? 0),
+      pitch: isCustomer ? 0 : 55,
+      zoom: isCustomer ? 15 : 17.5,
+    }, { duration: 650 });
+  }, [
+    acceptedMapMode,
+    mapFollowEnabled,
+    isCustomer,
+    providerLiveLocation?.latitude,
+    providerLiveLocation?.longitude,
+    providerLiveLocation?.heading,
+    driverLocationFresh,
+    request?.type,
+    request?.provider_arrived_at,
+  ]);
+
+  useEffect(() => {
+    setMapFollowEnabled(true);
+  }, [id]);
 
   useEffect(() => {
     if (!isCustomer || !request || request.status !== "accepted" ||
@@ -1626,16 +1716,17 @@ export default function RequestDetail() {
             scrollEnabled
             zoomEnabled
             rotateEnabled
+            onPanDrag={() => setMapFollowEnabled(false)}
           >
             {roadRoutePoints.length > 1 && (
               <>
-                <Polyline coordinates={roadRoutePoints} strokeColor="#FFFFFF" strokeWidth={11} lineCap="round" lineJoin="round" />
-                <Polyline coordinates={roadRoutePoints} strokeColor="#0B63CE" strokeWidth={6} lineCap="round" lineJoin="round" />
+                <Polyline coordinates={roadRoutePoints} strokeColor="#FFFFFF" strokeWidth={15} lineCap="round" lineJoin="round" />
+                <Polyline coordinates={roadRoutePoints} strokeColor="#0B63CE" strokeWidth={9} lineCap="round" lineJoin="round" />
                 {roadTrafficSegments.map((segment, index) => {
                   const segmentPoints = roadRoutePoints.slice(segment.startIndex, segment.endIndex);
                   if (segmentPoints.length < 2) return null;
                   const trafficColor = segment.speed === "TRAFFIC_JAM" ? "#DC2626" : segment.speed === "SLOW" ? "#F59E0B" : "#16A34A";
-                  return <Polyline key={index} coordinates={segmentPoints} strokeColor={trafficColor} strokeWidth={6} />;
+                  return <Polyline key={index} coordinates={segmentPoints} strokeColor={trafficColor} strokeWidth={8} />;
                 })}
               </>
             )}
@@ -1691,6 +1782,15 @@ export default function RequestDetail() {
             )}
           </MapView>
         )}
+        {acceptedMapMode && (
+          <TouchableOpacity
+            onPress={() => setMapFollowEnabled(true)}
+            style={{ position: "absolute", right: 16, top: 122, zIndex: 30, width: 46, height: 46, borderRadius: 23, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 6, shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 6 }}
+            accessibilityLabel="إعادة تتبع موقع المركبة"
+          >
+            <Text style={{ color: "#0B63CE", fontSize: 26, fontWeight: "900" }}>◎</Text>
+          </TouchableOpacity>
+        )}
         <View style={[styles.header, acceptedMapMode && styles.headerOnMap]}>
 
           <TouchableOpacity onPress={() => router.back()}>
@@ -1702,6 +1802,7 @@ export default function RequestDetail() {
         <View style={{ paddingHorizontal: 16, paddingVertical: 7, backgroundColor: acceptedMapMode ? "rgba(7,21,37,0.88)" : palette.surface, borderBottomWidth: 1, borderBottomColor: palette.line }}>
           <Text style={{ color: acceptedMapMode ? "#FFFFFF" : palette.ink, fontSize: 11, fontWeight: "900", textAlign: "center", writingDirection: "ltr" }}>رقم الطلب: {request.request_code || request.id.slice(0, 8).toUpperCase()}</Text>
         </View>
+        {(!acceptedMapMode || trackingSheetExpanded) && (
         <ScrollView
           ref={scrollRef}
           style={[styles.requestScroll, acceptedMapMode && styles.requestScrollOnMap]}
@@ -1710,6 +1811,12 @@ export default function RequestDetail() {
           keyboardShouldPersistTaps="handled"
           nestedScrollEnabled
         >
+        {acceptedMapMode && (
+          <TouchableOpacity activeOpacity={0.85} onPress={() => setTrackingSheetExpanded(false)} style={styles.expandedSheetHandle} {...trackingSheetPanResponder.panHandlers} accessibilityRole="button" accessibilityLabel="طي تفاصيل التتبع">
+            <View style={styles.sheetHandleBar} />
+            <Text style={styles.sheetHandleText}>اسحب للأسفل لإخفاء التفاصيل</Text>
+          </TouchableOpacity>
+        )}
         {acceptedMapMode && (
           <View style={styles.mapLiveBadge}>
             <View style={styles.mapLiveDot} />
@@ -2078,6 +2185,12 @@ export default function RequestDetail() {
                 <Image source={{ uri: "https://cdn.simpleicons.org/waze/33CCFF" }} style={styles.navigationAppIcon} resizeMode="contain" />
                 <Text style={styles.navigationAppLabel}>Waze</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={styles.navigationApp} onPress={() => openTaxiNavigation("darbuna")}>
+                <View style={[styles.navigationAppIcon, { alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: "#176B52" }]}>
+                  <Text style={{ color: "#FFFFFF", fontSize: 19, fontWeight: "900" }}>د</Text>
+                </View>
+                <Text style={styles.navigationAppLabel}>دربونة</Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
@@ -2109,50 +2222,76 @@ export default function RequestDetail() {
               <Text style={styles.actionBtnText}>تأكيد الإكمال</Text>
             </TouchableOpacity>
           )}
-          {cashSettlementOpen && request.status === "in_progress" && isProvider && (
-            <View style={{ backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line, borderRadius: radius.lg, padding: 14, gap: 10 }}>
-              <Text style={{ color: palette.ink, fontSize: 15, fontWeight: "900", textAlign: "right" }}>تسوية المبلغ النقدي</Text>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={{ color: palette.muted, fontSize: 12 }}>الأجرة المطلوبة</Text>
-                <Text style={{ color: palette.ink, fontSize: 12, fontWeight: "900" }}>{Number(request.customer_payable ?? request.customer_price ?? request.price_estimate ?? 0).toLocaleString("ar-IQ")} د.ع</Text>
-              </View>
-              {request.payment_method === "zaincash" ? (
-                <Text style={{ color: palette.muted, fontSize: 12, textAlign: "right" }}>الطلب مدفوع إلكترونياً؛ لا يوجد مبلغ نقدي مستلم.</Text>
-              ) : (
-                <>
-                  <TouchableOpacity
-                    onPress={() => setCashReceivedInput(String(Math.max(0, Math.round(Number(request.customer_payable ?? request.customer_price ?? request.price_estimate ?? 0)))))}
-                    style={{ borderWidth: 1, borderColor: palette.brand, borderRadius: 10, padding: 11, alignItems: "center" }}
-                  >
-                    <Text style={{ color: palette.brand, fontWeight: "900", fontSize: 12 }}>استلمت الأجرة بالضبط</Text>
-                  </TouchableOpacity>
-                  <Text style={{ color: palette.ink, fontSize: 12, fontWeight: "800", textAlign: "right" }}>كم استلمت من الزبون نقداً؟</Text>
-                  <TextInput
-                    value={cashReceivedInput}
-                    onChangeText={(value) => setCashReceivedInput(normalizeCashDigits(value))}
-                    keyboardType="number-pad"
-                    placeholder="مثلاً 5000"
-                    placeholderTextColor={palette.muted}
-                    style={{ borderWidth: 1, borderColor: palette.line, borderRadius: 10, padding: 12, color: palette.ink, textAlign: "right", fontWeight: "900" }}
-                  />
-                  <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                    <Text style={{ color: palette.muted, fontSize: 12 }}>الباقي للزبون</Text>
-                    <Text style={{ color: palette.brand, fontSize: 12, fontWeight: "900" }}>{Math.max(0, (Number(cashReceivedInput) || 0) - Number(request.customer_payable ?? request.customer_price ?? request.price_estimate ?? 0)).toLocaleString("ar-IQ")} د.ع</Text>
+          <Modal
+            visible={cashSettlementOpen && request.status === "in_progress" && isProvider}
+            transparent
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={() => { if (!transitionBusy) setCashSettlementOpen(false); }}
+          >
+            <KeyboardAvoidingView
+              behavior={Platform.OS === "ios" ? "padding" : undefined}
+              style={{ flex: 1, justifyContent: "center", paddingHorizontal: 18, backgroundColor: "rgba(10, 18, 32, 0.62)" }}
+            >
+              <View style={{ width: "100%", maxWidth: 440, alignSelf: "center", backgroundColor: palette.surface, borderRadius: 26, padding: 22, gap: 16, borderWidth: 1, borderColor: palette.line, elevation: 18, shadowColor: "#000", shadowOpacity: 0.22, shadowRadius: 22, shadowOffset: { width: 0, height: 10 } }}>
+                <View style={{ alignItems: "center", gap: 7 }}>
+                  <View style={{ width: 54, height: 6, borderRadius: 8, backgroundColor: palette.line }} />
+                  <Text style={{ color: palette.ink, fontSize: 22, fontWeight: "900", textAlign: "center" }}>تسوية المبلغ</Text>
+                  <Text style={{ color: palette.muted, fontSize: 13, fontWeight: "700", textAlign: "center" }}>سجّل المبلغ اللي استلمته من الزبون</Text>
+                </View>
+                <View style={{ backgroundColor: palette.surfaceSoft, borderRadius: 16, padding: 15, alignItems: "center", gap: 5 }}>
+                  <Text style={{ color: palette.muted, fontSize: 13, fontWeight: "800" }}>الأجرة المطلوبة</Text>
+                  <Text style={{ color: palette.ink, fontSize: 27, fontWeight: "900" }}>{Number(request.customer_payable ?? request.customer_price ?? request.price_estimate ?? 0).toLocaleString("ar-IQ")} د.ع</Text>
+                </View>
+                {request.payment_method === "zaincash" ? (
+                  <View style={{ backgroundColor: palette.surfaceSoft, borderRadius: 14, padding: 15 }}>
+                    <Text style={{ color: palette.muted, fontSize: 14, fontWeight: "800", textAlign: "center" }}>الطلب مدفوع إلكترونياً، ما تحتاج تستلم مبلغ نقدي.</Text>
                   </View>
-                </>
-              )}
-              <TouchableOpacity
-                onPress={() => void submitCashSettlement()}
-                disabled={transitionBusy}
-                style={[styles.actionBtn, { backgroundColor: palette.success, opacity: transitionBusy ? 0.55 : 1 }]}
-              >
-                <Text style={styles.actionBtnText}>{transitionBusy ? "جارٍ تسجيل المبلغ..." : "تأكيد المبلغ وإنهاء الطلب"}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setCashSettlementOpen(false)} disabled={transitionBusy} style={{ padding: 8, alignItems: "center" }}>
-                <Text style={{ color: palette.muted, fontWeight: "800", fontSize: 12 }}>رجوع</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+                ) : (
+                  <>
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => setCashReceivedInput(String(Math.max(0, Math.round(Number(request.customer_payable ?? request.customer_price ?? request.price_estimate ?? 0)))))}
+                      style={{ borderWidth: 2, borderColor: palette.success, backgroundColor: palette.success + "12", borderRadius: 15, paddingVertical: 15, paddingHorizontal: 12, alignItems: "center" }}
+                    >
+                      <Text style={{ color: palette.success, fontWeight: "900", fontSize: 16 }}>✓ استلمت الأجرة بالضبط</Text>
+                    </TouchableOpacity>
+                    <View style={{ gap: 8 }}>
+                      <Text style={{ color: palette.ink, fontSize: 15, fontWeight: "900", textAlign: "right" }}>أو اكتب المبلغ اللي استلمته</Text>
+                      <TextInput
+                        value={cashReceivedInput}
+                        onChangeText={(value) => setCashReceivedInput(normalizeCashDigits(value))}
+                        keyboardType="number-pad"
+                        placeholder="مثلاً 5000"
+                        placeholderTextColor={palette.muted}
+                        selectTextOnFocus
+                        style={{ borderWidth: 2, borderColor: palette.brand, borderRadius: 15, paddingVertical: 17, paddingHorizontal: 16, color: palette.ink, textAlign: "center", fontWeight: "900", fontSize: 27, backgroundColor: palette.surface }}
+                      />
+                      <Text style={{ color: palette.muted, fontSize: 12, textAlign: "center" }}>اكتب المبلغ بالدينار العراقي</Text>
+                    </View>
+                    <View style={{ backgroundColor: palette.surfaceSoft, borderRadius: 15, padding: 14, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <View style={{ flex: 1, gap: 4 }}>
+                        <Text style={{ color: palette.muted, fontSize: 13, fontWeight: "800" }}>الباقي للزبون</Text>
+                        <Text style={{ color: palette.muted, fontSize: 11 }}>يرجع تلقائياً إلى محفظته</Text>
+                      </View>
+                      <Text style={{ color: palette.success, fontSize: 22, fontWeight: "900" }}>{Math.max(0, (Number(cashReceivedInput) || 0) - Number(request.customer_payable ?? request.customer_price ?? request.price_estimate ?? 0)).toLocaleString("ar-IQ")} د.ع</Text>
+                    </View>
+                  </>
+                )}
+                <TouchableOpacity
+                  onPress={() => void submitCashSettlement()}
+                  disabled={transitionBusy}
+                  activeOpacity={0.85}
+                  style={[styles.actionBtn, { minHeight: 58, justifyContent: "center", borderRadius: 15, backgroundColor: palette.success, opacity: transitionBusy ? 0.55 : 1 }]}
+                >
+                  <Text style={[styles.actionBtnText, { fontSize: 16 }]}>{transitionBusy ? "جارٍ تسجيل المبلغ..." : "تأكيد المبلغ وإنهاء الطلب"}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setCashSettlementOpen(false)} disabled={transitionBusy} style={{ padding: 8, alignItems: "center" }}>
+                  <Text style={{ color: palette.muted, fontWeight: "800", fontSize: 14 }}>رجوع</Text>
+                </TouchableOpacity>
+              </View>
+            </KeyboardAvoidingView>
+          </Modal>
           {(isCustomer || (isProvider && request.type === "service")) &&
             request.status !== "cancelled" &&
             request.status !== "completed" &&
@@ -2204,6 +2343,22 @@ export default function RequestDetail() {
           </View>
         )}
         </ScrollView>
+        )}
+        {acceptedMapMode && !trackingSheetExpanded && (
+          <View style={styles.collapsedTrackingSheet} {...trackingSheetPanResponder.panHandlers}>
+            <TouchableOpacity activeOpacity={0.9} onPress={() => setTrackingSheetExpanded(true)} style={styles.collapsedSheetTouch} accessibilityRole="button" accessibilityLabel="فتح تفاصيل التتبع">
+              <View style={styles.sheetHandleBar} />
+              <View style={styles.collapsedSheetRow}>
+                <View style={styles.mapLiveDot} />
+                <Text style={styles.collapsedSheetTitle}>التتبع المباشر</Text>
+                <Text style={styles.collapsedSheetStatus} numberOfLines={1}>
+                  {request.type === "taxi" && request.status === "in_progress" ? "الرحلة مستمرة" : driverEtaMinutes != null ? `الوصول خلال ${driverEtaMinutes} دقيقة` : driverLocationFresh ? "الموقع يتحدث مباشرة" : "بانتظار تحديث الموقع"}
+                </Text>
+                <Text style={styles.collapsedSheetArrow}>⌃</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+        )}
         {showCancelSheet && (
           <View style={styles.cancelOverlay}>
             <View style={styles.cancelCard}>
@@ -2311,6 +2466,15 @@ const styles = StyleSheet.create({
   fullScreenTrackingMap: { ...StyleSheet.absoluteFillObject, zIndex: 0 },
   headerOnMap: { backgroundColor: "rgba(255,255,255,0.94)", borderBottomColor: "rgba(15,23,42,0.10)", elevation: 4 },
   requestScrollOnMap: { position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "38%", backgroundColor: "rgba(255,255,255,0.96)", borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: "hidden", elevation: 8 },
+  collapsedTrackingSheet: { position: "absolute", left: 0, right: 0, bottom: 0, minHeight: 70, backgroundColor: "rgba(255,255,255,0.98)", borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 10, elevation: 12, shadowColor: "#000", shadowOpacity: 0.14, shadowRadius: 8, shadowOffset: { width: 0, height: -3 } },
+  collapsedSheetTouch: { gap: 8 },
+  collapsedSheetRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  collapsedSheetTitle: { color: palette.ink, fontSize: 12, fontWeight: "900" },
+  collapsedSheetStatus: { color: palette.muted, fontSize: 11, fontWeight: "700", flex: 1, textAlign: "right" },
+  collapsedSheetArrow: { color: palette.brand, fontSize: 23, fontWeight: "900", marginTop: -5 },
+  expandedSheetHandle: { alignItems: "center", paddingTop: 9, paddingBottom: 5 },
+  sheetHandleBar: { width: 42, height: 5, borderRadius: 3, backgroundColor: "#94A3B8" },
+  sheetHandleText: { color: palette.muted, fontSize: 9, fontWeight: "700", marginTop: 4 },
   mapLiveBadge: { flexDirection: "row", alignItems: "center", alignSelf: "center", gap: 7, marginTop: 10, marginBottom: 3, paddingHorizontal: 13, paddingVertical: 8, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.96)", borderWidth: 1, borderColor: palette.line, elevation: 3 },
   mapLiveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: palette.success },
   mapLiveBadgeTitle: { color: palette.ink, fontSize: 11, fontWeight: "900" },
@@ -2350,9 +2514,9 @@ const styles = StyleSheet.create({
   trackingTitle: { fontSize: 15, fontWeight: "900", color: palette.ink, marginBottom: 10 },
   trackingMap: { height: 220, borderRadius: radius.md },
   trackingMapTaxi: { height: 340 },
-  endpointPin: { width: 30, height: 38, alignItems: "center", justifyContent: "flex-start", paddingTop: 4, backgroundColor: "#17324D", borderRadius: 16, borderBottomLeftRadius: 4, transform: [{ rotate: "-45deg" }], borderWidth: 2, borderColor: "#FFFFFF", elevation: 7 },
-  endpointPinCore: { width: 14, height: 14, borderRadius: 7, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  endpointPinDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#D6A43B" },
+  endpointPin: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(37,99,235,0.18)", borderWidth: 1.5, borderColor: "rgba(37,99,235,0.45)", elevation: 7 },
+  endpointPinCore: { width: 18, height: 18, borderRadius: 9, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#2563EB" },
+  endpointPinDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#2563EB" },
   destinationPin: { width: 34, height: 42, alignItems: "center", justifyContent: "flex-start", paddingTop: 5, borderRadius: 18, borderBottomLeftRadius: 4, transform: [{ rotate: "-45deg" }], borderWidth: 2.5, borderColor: "#FFFFFF", elevation: 10, shadowColor: "#9F1239", shadowOpacity: 0.35, shadowRadius: 5, shadowOffset: { width: 0, height: 3 }, overflow: "hidden" },
   destinationPinCore: { width: 16, height: 16, borderRadius: 8, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
   destinationPinDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#C62828" },
