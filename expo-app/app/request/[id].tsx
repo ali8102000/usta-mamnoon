@@ -2185,6 +2185,12 @@ export default function RequestDetail() {
                 <Image source={{ uri: "https://cdn.simpleicons.org/waze/33CCFF" }} style={styles.navigationAppIcon} resizeMode="contain" />
                 <Text style={styles.navigationAppLabel}>Waze</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={styles.navigationApp} onPress={() => openTaxiNavigation("darbuna")}>
+                <View style={[styles.navigationAppIcon, { alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: "#176B52" }]}>
+                  <Text style={{ color: "#FFFFFF", fontSize: 19, fontWeight: "900" }}>د</Text>
+                </View>
+                <Text style={styles.navigationAppLabel}>دربونة</Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
