@@ -85,10 +85,11 @@ export default function LiveNavigationScreen(props: Props) {
     // يحفظ المزود بيانات الطريق في الجدول المنفصل؛ الزبون يقرأها فقط.
     if (providerMode) {
       const { data: authData } = await supabase.auth.getUser();
+      const { data: authData } = await supabase.auth.getUser();
       await supabase.from("request_navigation").upsert({
         request_id: props.requestId,
         route_phase: phase,
-        route_polyline: null,
+        route_polyline: JSON.stringify(parsed.routePoints),
         route_points: parsed.routePoints,
         route_steps: parsed.routeSteps,
         eta_minutes: parsed.durationMin,
@@ -231,15 +232,21 @@ export default function LiveNavigationScreen(props: Props) {
   const onArrived = () => {
     if (props.role === "usta") {
       setPhase("service_work");
-      void supabase.from("request_navigation").upsert({
-        request_id: props.requestId, route_phase: "service_work",
+      void supabase.auth.getUser().then(({ data }) => supabase.from("request_navigation").upsert({
+        request_id: props.requestId, route_phase: "service_work", updated_by: data.user?.id,
         route_points: [], route_steps: [], eta_minutes: 0, distance_meters: 0,
         updated_at: new Date().toISOString(),
       }, { onConflict: "request_id" });
-    } else if (props.role === "captain" || props.role === "naqil") {
+    } else if ((props.role === "captain" || props.role === "naqil") && phase === "to_pickup") {
       setPhase("to_destination");
       lastRoutePoint.current = null;
       void fetchRoadRoute(live ?? props.pickup, props.destination);
+    } else if (props.role === "captain" || props.role === "naqil") {
+      setPhase("completed");
+      void supabase.auth.getUser().then(({ data }) => supabase.from("request_navigation").upsert({
+        request_id: props.requestId, route_phase: "completed", route_points: [],
+        route_steps: [], eta_minutes: 0, distance_meters: 0, updated_by: data.user?.id,
+      }, { onConflict: "request_id" }));
     }
     props.onMainAction?.();
   };
