@@ -244,7 +244,7 @@ export default function HomeScreen() {
       const accuracy = location.coords.accuracy;
       // Keep the last good server position instead of replacing it with a weak GPS fix.
       if (!Number.isFinite(accuracy) || Number(accuracy) > 100) return;
-      const { error } = await supabase.from("provider_presence_roles").upsert(
+      const { error } = await (supabase as any).from("provider_presence_roles").upsert(
         {
           user_id: userId,
           role: selectedRole,
@@ -275,7 +275,7 @@ export default function HomeScreen() {
       presenceFailureHandled = true;
       console.warn("[Mamnoon provider presence] startup/update failed:", presenceError);
       await stopProviderPresenceBackgroundLocation().catch(() => undefined);
-      await supabase.from(table).update({ available: false }).eq("user_id", userId);
+      await (supabase as any).from(table).update({ available: false }).eq("user_id", userId);
       await (supabase as any).from("provider_presence_roles").update({ status: "offline" }).eq("user_id", userId).eq("role", selectedRole);
       if (!mounted) return;
       const code = presenceError instanceof Error ? presenceError.message : "";
@@ -370,7 +370,7 @@ export default function HomeScreen() {
         }
         const location = await getFreshProviderLocation();
         const accuracy = location.coords.accuracy;
-        const { error: presenceError } = await supabase.from("provider_presence_roles").upsert(
+        const { error: presenceError } = await (supabase as any).from("provider_presence_roles").upsert(
           {
             user_id: user.id,
             role: selectedRole,
@@ -393,7 +393,7 @@ export default function HomeScreen() {
       }
 
       // Do not show the provider as available until a fresh location is saved successfully.
-      const { error } = await supabase.from(table).update({ available: next }).eq("user_id", user.id);
+      const { error } = await (supabase as any).from(table).update({ available: next }).eq("user_id", user.id);
       if (error) throw error;
       setAvailable(next);
       await (supabase as any).from("provider_presence_roles").update({ status: next ? "online" : "offline" }).eq("user_id", user.id).eq("role", selectedRole);
