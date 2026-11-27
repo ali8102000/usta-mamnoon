@@ -281,12 +281,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         mappedRoles.push(APP_VARIANT as AppRole);
       }
 
-      const driverApproved = !driverResult.error && driverResult.data?.status === "approved";
-      const workerApproved = !workerResult.error && workerResult.data?.status === "approved";
+      const assignedRoles = new Set((rolesResult.data ?? []).map((row) => row.role as AppRole));
+      const driverCategory = String(driverResult.data?.vehicle_category);
+      const requiredDriverRole: AppRole | null = driverCategory === "large" ? "large_driver"
+        : ["economy", "premium", "luxury"].includes(driverCategory) ? "driver" : null;
+      const driverApproved = !rolesResult.error && !driverResult.error && driverResult.data?.status === "approved"
+        && !!requiredDriverRole && assignedRoles.has(requiredDriverRole);
+      const workerApproved = !rolesResult.error && !workerResult.error && workerResult.data?.status === "approved"
+        && assignedRoles.has("worker");
 
       if (driverApproved && driverResult.data) {
-        const driverRole: AppRole = driverResult.data.vehicle_category === "large" ? "large_driver" : "driver";
-        if (!mappedRoles.includes(driverRole)) mappedRoles.push(driverRole);
+        const category = String(driverResult.data.vehicle_category);
+        const driverRole: AppRole | null = category === "large" ? "large_driver"
+          : ["economy", "premium", "luxury"].includes(category) ? "driver" : null;
+        if (driverRole && !mappedRoles.includes(driverRole)) mappedRoles.push(driverRole);
       }
       if (workerApproved && !mappedRoles.includes("worker")) {
         mappedRoles.push("worker");
