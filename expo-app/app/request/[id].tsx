@@ -752,7 +752,7 @@ export default function RequestDetail() {
 
         const { startMamnoonBackgroundLocation } = await import("@/lib/background-location");
         try {
-          await startMamnoonBackgroundLocation({ requestId: id, userId: currentUserId, role, providerRole: role === "provider" ? activeRole : null });
+          await startMamnoonBackgroundLocation({ requestId: id, userId: currentUserId, role, providerRole: role === "provider" && (activeRole === "driver" || activeRole === "large_driver" || activeRole === "worker") ? activeRole : null });
         } catch (backgroundError: any) {
           console.warn("[Mamnoon] background tracking unavailable; foreground tracking remains active:", backgroundError);
           if (mounted && backgroundError?.message === "background_location_denied") {
@@ -816,7 +816,7 @@ export default function RequestDetail() {
           const row = payload.new as { user_id?: string; lat?: number; lng?: number; heading?: number | null; updated_at?: string };
           if (
             row.user_id === otherId &&
-            (isCustomer || row.provider_role === request?.provider_role) &&
+            (isCustomer || (row as any).provider_role === request?.provider_role) &&
             typeof row.lat === "number" &&
             typeof row.lng === "number"
           ) {
