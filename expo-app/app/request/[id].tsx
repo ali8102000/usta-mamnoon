@@ -13,6 +13,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   PanResponder,
+  Modal,
 } from "react-native";
 import MapView, { AnimatedRegion, Marker, Polyline } from "react-native-maps";
 import { LinearGradient } from "expo-linear-gradient";
@@ -2215,50 +2216,76 @@ export default function RequestDetail() {
               <Text style={styles.actionBtnText}>تأكيد الإكمال</Text>
             </TouchableOpacity>
           )}
-          {cashSettlementOpen && request.status === "in_progress" && isProvider && (
-            <View style={{ backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line, borderRadius: radius.lg, padding: 14, gap: 10 }}>
-              <Text style={{ color: palette.ink, fontSize: 15, fontWeight: "900", textAlign: "right" }}>تسوية المبلغ النقدي</Text>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={{ color: palette.muted, fontSize: 12 }}>الأجرة المطلوبة</Text>
-                <Text style={{ color: palette.ink, fontSize: 12, fontWeight: "900" }}>{Number(request.customer_payable ?? request.customer_price ?? request.price_estimate ?? 0).toLocaleString("ar-IQ")} د.ع</Text>
-              </View>
-              {request.payment_method === "zaincash" ? (
-                <Text style={{ color: palette.muted, fontSize: 12, textAlign: "right" }}>الطلب مدفوع إلكترونياً؛ لا يوجد مبلغ نقدي مستلم.</Text>
-              ) : (
-                <>
-                  <TouchableOpacity
-                    onPress={() => setCashReceivedInput(String(Math.max(0, Math.round(Number(request.customer_payable ?? request.customer_price ?? request.price_estimate ?? 0)))))}
-                    style={{ borderWidth: 1, borderColor: palette.brand, borderRadius: 10, padding: 11, alignItems: "center" }}
-                  >
-                    <Text style={{ color: palette.brand, fontWeight: "900", fontSize: 12 }}>استلمت الأجرة بالضبط</Text>
-                  </TouchableOpacity>
-                  <Text style={{ color: palette.ink, fontSize: 12, fontWeight: "800", textAlign: "right" }}>كم استلمت من الزبون نقداً؟</Text>
-                  <TextInput
-                    value={cashReceivedInput}
-                    onChangeText={(value) => setCashReceivedInput(normalizeCashDigits(value))}
-                    keyboardType="number-pad"
-                    placeholder="مثلاً 5000"
-                    placeholderTextColor={palette.muted}
-                    style={{ borderWidth: 1, borderColor: palette.line, borderRadius: 10, padding: 12, color: palette.ink, textAlign: "right", fontWeight: "900" }}
-                  />
-                  <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                    <Text style={{ color: palette.muted, fontSize: 12 }}>الباقي للزبون</Text>
-                    <Text style={{ color: palette.brand, fontSize: 12, fontWeight: "900" }}>{Math.max(0, (Number(cashReceivedInput) || 0) - Number(request.customer_payable ?? request.customer_price ?? request.price_estimate ?? 0)).toLocaleString("ar-IQ")} د.ع</Text>
+          <Modal
+            visible={cashSettlementOpen && request.status === "in_progress" && isProvider}
+            transparent
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={() => { if (!transitionBusy) setCashSettlementOpen(false); }}
+          >
+            <KeyboardAvoidingView
+              behavior={Platform.OS === "ios" ? "padding" : undefined}
+              style={{ flex: 1, justifyContent: "center", paddingHorizontal: 18, backgroundColor: "rgba(10, 18, 32, 0.62)" }}
+            >
+              <View style={{ width: "100%", maxWidth: 440, alignSelf: "center", backgroundColor: palette.surface, borderRadius: 26, padding: 22, gap: 16, borderWidth: 1, borderColor: palette.line, elevation: 18, shadowColor: "#000", shadowOpacity: 0.22, shadowRadius: 22, shadowOffset: { width: 0, height: 10 } }}>
+                <View style={{ alignItems: "center", gap: 7 }}>
+                  <View style={{ width: 54, height: 6, borderRadius: 8, backgroundColor: palette.line }} />
+                  <Text style={{ color: palette.ink, fontSize: 22, fontWeight: "900", textAlign: "center" }}>تسوية المبلغ</Text>
+                  <Text style={{ color: palette.muted, fontSize: 13, fontWeight: "700", textAlign: "center" }}>سجّل المبلغ اللي استلمته من الزبون</Text>
+                </View>
+                <View style={{ backgroundColor: palette.surfaceSoft, borderRadius: 16, padding: 15, alignItems: "center", gap: 5 }}>
+                  <Text style={{ color: palette.muted, fontSize: 13, fontWeight: "800" }}>الأجرة المطلوبة</Text>
+                  <Text style={{ color: palette.ink, fontSize: 27, fontWeight: "900" }}>{Number(request.customer_payable ?? request.customer_price ?? request.price_estimate ?? 0).toLocaleString("ar-IQ")} د.ع</Text>
+                </View>
+                {request.payment_method === "zaincash" ? (
+                  <View style={{ backgroundColor: palette.surfaceSoft, borderRadius: 14, padding: 15 }}>
+                    <Text style={{ color: palette.muted, fontSize: 14, fontWeight: "800", textAlign: "center" }}>الطلب مدفوع إلكترونياً، ما تحتاج تستلم مبلغ نقدي.</Text>
                   </View>
-                </>
-              )}
-              <TouchableOpacity
-                onPress={() => void submitCashSettlement()}
-                disabled={transitionBusy}
-                style={[styles.actionBtn, { backgroundColor: palette.success, opacity: transitionBusy ? 0.55 : 1 }]}
-              >
-                <Text style={styles.actionBtnText}>{transitionBusy ? "جارٍ تسجيل المبلغ..." : "تأكيد المبلغ وإنهاء الطلب"}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setCashSettlementOpen(false)} disabled={transitionBusy} style={{ padding: 8, alignItems: "center" }}>
-                <Text style={{ color: palette.muted, fontWeight: "800", fontSize: 12 }}>رجوع</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+                ) : (
+                  <>
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => setCashReceivedInput(String(Math.max(0, Math.round(Number(request.customer_payable ?? request.customer_price ?? request.price_estimate ?? 0)))))}
+                      style={{ borderWidth: 2, borderColor: palette.success, backgroundColor: palette.success + "12", borderRadius: 15, paddingVertical: 15, paddingHorizontal: 12, alignItems: "center" }}
+                    >
+                      <Text style={{ color: palette.success, fontWeight: "900", fontSize: 16 }}>✓ استلمت الأجرة بالضبط</Text>
+                    </TouchableOpacity>
+                    <View style={{ gap: 8 }}>
+                      <Text style={{ color: palette.ink, fontSize: 15, fontWeight: "900", textAlign: "right" }}>أو اكتب المبلغ اللي استلمته</Text>
+                      <TextInput
+                        value={cashReceivedInput}
+                        onChangeText={(value) => setCashReceivedInput(normalizeCashDigits(value))}
+                        keyboardType="number-pad"
+                        placeholder="مثلاً 5000"
+                        placeholderTextColor={palette.muted}
+                        selectTextOnFocus
+                        style={{ borderWidth: 2, borderColor: palette.brand, borderRadius: 15, paddingVertical: 17, paddingHorizontal: 16, color: palette.ink, textAlign: "center", fontWeight: "900", fontSize: 27, backgroundColor: palette.surface }}
+                      />
+                      <Text style={{ color: palette.muted, fontSize: 12, textAlign: "center" }}>اكتب المبلغ بالدينار العراقي</Text>
+                    </View>
+                    <View style={{ backgroundColor: palette.surfaceSoft, borderRadius: 15, padding: 14, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <View style={{ flex: 1, gap: 4 }}>
+                        <Text style={{ color: palette.muted, fontSize: 13, fontWeight: "800" }}>الباقي للزبون</Text>
+                        <Text style={{ color: palette.muted, fontSize: 11 }}>يرجع تلقائياً إلى محفظته</Text>
+                      </View>
+                      <Text style={{ color: palette.success, fontSize: 22, fontWeight: "900" }}>{Math.max(0, (Number(cashReceivedInput) || 0) - Number(request.customer_payable ?? request.customer_price ?? request.price_estimate ?? 0)).toLocaleString("ar-IQ")} د.ع</Text>
+                    </View>
+                  </>
+                )}
+                <TouchableOpacity
+                  onPress={() => void submitCashSettlement()}
+                  disabled={transitionBusy}
+                  activeOpacity={0.85}
+                  style={[styles.actionBtn, { minHeight: 58, justifyContent: "center", borderRadius: 15, backgroundColor: palette.success, opacity: transitionBusy ? 0.55 : 1 }]}
+                >
+                  <Text style={[styles.actionBtnText, { fontSize: 16 }]}>{transitionBusy ? "جارٍ تسجيل المبلغ..." : "تأكيد المبلغ وإنهاء الطلب"}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setCashSettlementOpen(false)} disabled={transitionBusy} style={{ padding: 8, alignItems: "center" }}>
+                  <Text style={{ color: palette.muted, fontWeight: "800", fontSize: 14 }}>رجوع</Text>
+                </TouchableOpacity>
+              </View>
+            </KeyboardAvoidingView>
+          </Modal>
           {(isCustomer || (isProvider && request.type === "service")) &&
             request.status !== "cancelled" &&
             request.status !== "completed" &&
