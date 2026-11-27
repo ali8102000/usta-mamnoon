@@ -21,7 +21,7 @@ async function withLocationTimeout<T>(promise: Promise<T>, timeoutMs: number): P
   }
 }
 
-type TrackingContext = { requestId: string; userId: string; role: "customer" | "provider" };
+type TrackingContext = { requestId: string; userId: string; role: "customer" | "provider"; providerRole?: "driver" | "large_driver" | "worker" | null };
 
 TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
   if (error || !data) {
@@ -45,12 +45,12 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
     }
     const { data: request, error: requestError } = await supabase
       .from("service_requests")
-      .select("customer_id, provider_id, status, type, provider_arrived_at")
+      .select("customer_id, provider_id, provider_role, status, type, provider_arrived_at")
       .eq("id", context.requestId)
       .maybeSingle();
     const isCorrectParticipant = request && (
       (context.role === "customer" && request.customer_id === context.userId) ||
-      (context.role === "provider" && request.provider_id === context.userId)
+      (context.role === "provider" && request.provider_id === context.userId && request.provider_role === context.providerRole)
     );
     const isActive = request && ["accepted", "in_progress"].includes(request.status);
     const serviceProviderArrived = context.role === "provider" && request?.type === "service" && Boolean(request.provider_arrived_at);
@@ -65,6 +65,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
         request_id: context.requestId,
         user_id: context.userId,
         role: context.role,
+        provider_role: context.role === "provider" ? context.providerRole ?? null : null,
         lat: location.coords.latitude,
         lng: location.coords.longitude,
         heading: location.coords.heading,
@@ -85,6 +86,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
           .select("lat,lng,recorded_at")
           .eq("request_id", context.requestId)
           .eq("role", "provider")
+          .eq("provider_role", context.providerRole ?? "")
           .order("recorded_at", { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -106,6 +108,7 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
               request_id: context.requestId,
               user_id: context.userId,
               role: context.role,
+              provider_role: context.role === "provider" ? context.providerRole ?? null : null,
               lat: location.coords.latitude,
               lng: location.coords.longitude,
               heading: location.coords.heading,
@@ -149,7 +152,7 @@ TaskManager.defineTask(PROVIDER_PRESENCE_TASK, async ({ data, error }) => {
       await SecureStore.deleteItemAsync(PROVIDER_CONTEXT_KEY);
       return;
     }
-    const table = context.role === "worker" ? "worker_profiles" : "driver_profiles";
+    const table = context.role === "worker" ? "worker_profiles" : context.role === "large_driver" ? "naqil_profiles" : "driver_profiles";
     const { data: profile, error: profileError } = await supabase
       .from(table)
       .select("available, status")
@@ -164,8 +167,10 @@ TaskManager.defineTask(PROVIDER_PRESENCE_TASK, async ({ data, error }) => {
     for (const location of locations) {
       if (!Number.isFinite(location.coords.accuracy) || Number(location.coords.accuracy) > 100) continue;
       const speed = location.coords.speed;
-      const { error: writeError } = await (supabase as any).from("provider_presence").upsert({
+      const { error: writeError } = await (supabase as any).from("provider_presence_roles").upsert({
         user_id: context.userId,
+        role: context.role,
+        status: "online",
         lat: location.coords.latitude,
         lng: location.coords.longitude,
         heading:
@@ -178,7 +183,7 @@ TaskManager.defineTask(PROVIDER_PRESENCE_TASK, async ({ data, error }) => {
         updated_at: new Date(location.timestamp).toISOString(),
         accuracy_m: location.coords.accuracy,
         speed_mps: typeof speed === "number" && Number.isFinite(speed) && speed >= 0 ? speed : null,
-      }, { onConflict: "user_id" });
+      }, { onConflict: "user_id,role" });
       if (writeError) console.warn("[Mamnoon provider presence] update failed:", writeError.message);
     }
   } catch (taskError) {
