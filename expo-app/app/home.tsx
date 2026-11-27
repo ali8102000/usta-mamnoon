@@ -138,7 +138,7 @@ export default function HomeScreen() {
       setIncoming((current) => current.length ? [] : current);
       return;
     }
-    const { data, error } = await supabase
+    const { data, error } = await (supabase as any)
       .from("service_requests")
       .select("id, type, pickup_text, dest_text, distance_km, price_estimate, customer_payable, customer_price, vehicle_category, vehicle_type, urgency_multiplier, service_urgency_enabled, large_vehicle_urgency_enabled, taxi_urgency_enabled, taxi_urgency_percent")
       .in("id", requestIds)
