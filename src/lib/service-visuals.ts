@@ -7,7 +7,6 @@ import plumbing from "@/assets/service-plumbing.jpg";
 import electricSetup from "@/assets/service-electric_setup.jpg";
 import electricStreet from "@/assets/service-electric_street.jpg";
 import washer from "@/assets/service-washer_repair.jpg";
-import carRepair from "@/assets/service-car_repair.jpg";
 import stove from "@/assets/service-stove_repair.jpg";
 import fridge from "@/assets/service-fridge_repair.jpg";
 import ac_repair from "@/assets/service-ac_repair.jpg";
@@ -37,7 +36,7 @@ const serviceIcons: Record<string, string> = {
   electric_setup: electricSetup,
   electric_street: electricStreet,
   washer_repair: washer,
-  car_repair: carRepair,
+  car_repair: "https://raw.githubusercontent.com/ali8102000/mamnoon/main/src/assets/service-car_repair.jpg",
   stove_repair: stove,
   fridge_repair: fridge,
   ac_repair: ac_repair,
