@@ -248,7 +248,6 @@ export default function HomeScreen() {
         {
           user_id: userId,
           role: selectedRole,
-          status: "online",
           lat: location.coords.latitude,
           lng: location.coords.longitude,
           heading:
