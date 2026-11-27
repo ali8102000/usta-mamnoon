@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { router } from "expo-router";
+import { Redirect, router } from "expo-router";
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
 import * as ImagePicker from "expo-image-picker";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
+import { APP_VARIANT } from "@/lib/app-variant";
 import { safeNavigate } from "@/lib/safe-navigation";
 import { Button } from "@/components/ui";
 import { getServiceImage } from "@/lib/service-visuals";
@@ -25,6 +26,11 @@ type PickedImage = { uri: string; mimeType?: string | null; fileName?: string | 
 type PhotoKind = "face" | "id-front" | "id-back";
 
 export default function WorkerOnboarding() {
+  if (APP_VARIANT !== "worker") return <Redirect href="/" />;
+  return <WorkerOnboardingScreen />;
+}
+
+function WorkerOnboardingScreen() {
   const { user, refresh, setActiveRole, roles } = useAuth();
   const [companyName, setCompanyName] = useState("شركة ممنون");
   const [services, setServices] = useState<WorkerService[]>([]);
