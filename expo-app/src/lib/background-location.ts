@@ -153,7 +153,7 @@ TaskManager.defineTask(PROVIDER_PRESENCE_TASK, async ({ data, error }) => {
       return;
     }
     const table = context.role === "worker" ? "worker_profiles" : context.role === "large_driver" ? "naqil_profiles" : "driver_profiles";
-    const { data: profile, error: profileError } = await supabase
+    const { data: profile, error: profileError } = await (supabase as any)
       .from(table)
       .select("available, status")
       .eq("user_id", context.userId)
