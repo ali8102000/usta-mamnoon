@@ -1,3 +1,4 @@
+# Release-candidate verification build 2026-11-27
 # Manual APK build trigger: role-isolation-v1 test build
 name: Build Android APK (GitHub Actions)
 # Rebuild with the current repository secrets.
