@@ -933,7 +933,7 @@ export default function RequestDetail() {
         )
       : Number.POSITIVE_INFINITY;
     if (previousRouteRequest && previousRouteRequest.routeKey === routeKey &&
-        movedMeters < 15 && Date.now() - previousRouteRequest.requestedAt < 8000) return;
+        movedMeters < 50 && Date.now() - previousRouteRequest.requestedAt < 30000) return;
 
     const sequence = ++roadRouteSequenceRef.current;
     const timeout = setTimeout(() => {
@@ -1059,7 +1059,7 @@ export default function RequestDetail() {
 
   // Keep the active provider centered during navigation; user panning pauses follow mode.
   useEffect(() => {
-    if (!acceptedMapMode || !mapFollowEnabled || !providerLiveLocation || !acceptedMapRef.current) return;
+    if (!acceptedMapMode || !mapFollowEnabled || !driverLocationFresh || !providerLiveLocation || !acceptedMapRef.current) return;
     acceptedMapRef.current.animateCamera({
       center: {
         latitude: providerLiveLocation.latitude,
@@ -1076,6 +1076,7 @@ export default function RequestDetail() {
     providerLiveLocation?.latitude,
     providerLiveLocation?.longitude,
     providerLiveLocation?.heading,
+    driverLocationFresh,
   ]);
 
   useEffect(() => {
