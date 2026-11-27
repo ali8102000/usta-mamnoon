@@ -250,6 +250,7 @@ export default function RequestDetail() {
   const [retryingLargeOffers, setRetryingLargeOffers] = useState(false);
   const [chatId, setChatId] = useState<string | null>(null);
   const [myLocation, setMyLocation] = useState<Coordinates | null>(null);
+  const [mapFollowEnabled, setMapFollowEnabled] = useState(true);
   const [otherLocation, setOtherLocation] = useState<Coordinates | null>(null);
   const [providerRoutePoints, setProviderRoutePoints] = useState<Coordinates[]>([]);
   const [roadRoutePoints, setRoadRoutePoints] = useState<Coordinates[]>([]);
@@ -1056,6 +1057,30 @@ export default function RequestDetail() {
     roadRoutePoints,
   ]);
 
+  // Keep the active provider centered during navigation; user panning pauses follow mode.
+  useEffect(() => {
+    if (!acceptedMapMode || !mapFollowEnabled || !providerLiveLocation || !acceptedMapRef.current) return;
+    acceptedMapRef.current.animateCamera({
+      center: {
+        latitude: providerLiveLocation.latitude,
+        longitude: providerLiveLocation.longitude,
+      },
+      heading: isCustomer ? 0 : Number(providerLiveLocation.heading ?? 0),
+      pitch: isCustomer ? 0 : 55,
+      zoom: isCustomer ? 15 : 17.5,
+    }, { duration: 650 });
+  }, [
+    acceptedMapMode,
+    mapFollowEnabled,
+    isCustomer,
+    providerLiveLocation?.latitude,
+    providerLiveLocation?.longitude,
+    providerLiveLocation?.heading,
+  ]);
+
+  useEffect(() => {
+    setMapFollowEnabled(true);
+  }, [id]);
 
   useEffect(() => {
     if (!isCustomer || !request || request.status !== "accepted" ||
@@ -1626,6 +1651,7 @@ export default function RequestDetail() {
             scrollEnabled
             zoomEnabled
             rotateEnabled
+            onPanDrag={() => setMapFollowEnabled(false)}
           >
             {roadRoutePoints.length > 1 && (
               <>
@@ -1690,6 +1716,15 @@ export default function RequestDetail() {
               </>
             )}
           </MapView>
+        )}
+        {acceptedMapMode && (
+          <TouchableOpacity
+            onPress={() => setMapFollowEnabled(true)}
+            style={{ position: "absolute", right: 16, top: 122, zIndex: 30, width: 46, height: 46, borderRadius: 23, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 6, shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 6 }}
+            accessibilityLabel="إعادة تتبع موقع المركبة"
+          >
+            <Text style={{ color: "#0B63CE", fontSize: 26, fontWeight: "900" }}>◎</Text>
+          </TouchableOpacity>
         )}
         <View style={[styles.header, acceptedMapMode && styles.headerOnMap]}>
 
