@@ -356,6 +356,13 @@ export default function RequestDetail() {
 
   const openTaxiNavigation = useCallback((app: "google" | "waze" | "darbuna") => {
     if (!request) return;
+    if (app === "darbuna") {
+      Alert.alert(
+        "دربونة",
+        "دربونة لا توفّر حالياً رابطاً موثقاً لاستلام الوجهة من ممنون. افتح دربونة وابحث عن موقع الوجهة يدوياً. ما راح نرسل رابطاً غير مضمون أو نغيّر تتبع ممنون."
+      );
+      return;
+    }
     const customerTaxiDestination = request.type === "taxi" && isCustomer &&
       request.dest_lat != null && request.dest_lng != null;
     const targetLat = customerTaxiDestination ? request.dest_lat : request.pickup_lat;
@@ -374,9 +381,7 @@ export default function RequestDetail() {
     const destination = `${latitude},${longitude}`;
     const url = app === "google"
       ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving&dir_action=navigate`
-      : app === "waze"
-        ? `https://waze.com/ul?ll=${encodeURIComponent(destination)}&navigate=yes`
-        : `https://map.darbuna.app/pin/${latitude},${longitude},17z`;
+      : `https://waze.com/ul?ll=${encodeURIComponent(destination)}&navigate=yes`;
 
     void Linking.openURL(url).catch((error) => {
       console.warn("[taxi navigation] unable to open navigation app:", error);
