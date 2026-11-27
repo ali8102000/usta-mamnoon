@@ -93,6 +93,7 @@ type RequestRecord = {
   urgency_multiplier?: number | null;
   urgency_percent?: number | null;
   provider_id: string | null;
+  provider_role?: "driver" | "large_driver" | "worker" | null;
   customer_id: string;
   status: string;
   type: string;
@@ -232,7 +233,7 @@ function DestinationMarker({ coordinate }: { coordinate: Coordinates }) {
 
 export default function RequestDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { user, roles } = useAuth();
+  const { user, roles, activeRole } = useAuth();
   const [request, setRequest] = useState<RequestRecord | null>(null);
   const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
   const [otherProfile, setOtherProfile] = useState<{ full_name: string | null; avatar_url: string | null; phone: string | null } | null>(null);
@@ -310,7 +311,7 @@ export default function RequestDetail() {
   const [serviceProviders, setServiceProviders] = useState<any[]>([]);
   const scrollRef = useRef<ScrollView>(null);
   const weeklyRatingNoticeRef = useRef<string | null>(null);
-  const isProvider = request?.provider_id === user?.id || serviceProviders.some((member) => member.provider_id === user?.id);
+  const isProvider = (request?.provider_id === user?.id && request?.provider_role === activeRole) || (activeRole === "worker" && serviceProviders.some((member) => member.provider_id === user?.id));
   const isCustomer = request?.customer_id === user?.id;
   const canAccept = Boolean(
     request &&
@@ -444,10 +445,10 @@ export default function RequestDetail() {
   }, []);
 
   const loadRequest = useCallback(async () => {
-    const { data, error } = await supabase
+    const { data, error } = await (supabase as any)
       .from("service_requests")
       .select(
-        "id, provider_id, customer_id, status, type, pickup_text, dest_text, price_estimate, customer_payable, payment_method, customer_price, pricing_mode, work_hours, work_description, workers_count, taxi_urgency_enabled, taxi_urgency_percent, services(name_ar, slug), pickup_lat, pickup_lng, dest_lat, dest_lng, vehicle_category, vehicle_type, notes, attachment_path, created_at, searching_started_at, provider_arrived_at, cancellation_reason, distance_km, urgency_base_price, urgency_multiplier, urgency_percent, urgency_amount, staffing_search_paused_at, cash_change_iqd",
+        "id, provider_id, provider_role, customer_id, status, type, pickup_text, dest_text, price_estimate, customer_payable, payment_method, customer_price, pricing_mode, work_hours, work_description, workers_count, taxi_urgency_enabled, taxi_urgency_percent, services(name_ar, slug), pickup_lat, pickup_lng, dest_lat, dest_lng, vehicle_category, vehicle_type, notes, attachment_path, created_at, searching_started_at, provider_arrived_at, cancellation_reason, distance_km, urgency_base_price, urgency_multiplier, urgency_percent, urgency_amount, staffing_search_paused_at, cash_change_iqd",
       )
       .eq("id", id)
       .maybeSingle();
@@ -702,10 +703,11 @@ export default function RequestDetail() {
       };
       setMyLocation(coords);
 
-      const { error } = await supabase.from("live_locations").upsert({
+      const { error } = await (supabase as any).from("live_locations").upsert({
         request_id: id,
         user_id: currentUserId,
         role,
+        provider_role: role === "provider" ? activeRole : null,
         lat: latitude,
         lng: longitude,
         heading: location.coords.heading,
@@ -728,10 +730,11 @@ export default function RequestDetail() {
           : Number.POSITIVE_INFINITY;
         if (!previous || distance >= 8 || elapsed >= 10000) {
           lastRoutePointRef.current = { latitude, longitude, timestamp: Date.now() };
-          const { error: pointError } = await supabase.from("trip_location_points").insert({
+          const { error: pointError } = await (supabase as any).from("trip_location_points").insert({
             request_id: id,
             user_id: currentUserId,
             role: "provider",
+            provider_role: activeRole,
             lat: latitude,
             lng: longitude,
             heading: location.coords.heading,
@@ -761,7 +764,7 @@ export default function RequestDetail() {
 
         const { startMamnoonBackgroundLocation } = await import("@/lib/background-location");
         try {
-          await startMamnoonBackgroundLocation({ requestId: id, userId: currentUserId, role });
+          await startMamnoonBackgroundLocation({ requestId: id, userId: currentUserId, role, providerRole: role === "provider" && (activeRole === "driver" || activeRole === "large_driver" || activeRole === "worker") ? activeRole : null });
         } catch (backgroundError: any) {
           console.warn("[Mamnoon] background tracking unavailable; foreground tracking remains active:", backgroundError);
           if (mounted && backgroundError?.message === "background_location_denied") {
@@ -825,6 +828,7 @@ export default function RequestDetail() {
           const row = payload.new as { user_id?: string; lat?: number; lng?: number; heading?: number | null; updated_at?: string };
           if (
             row.user_id === otherId &&
+            (isCustomer || (row as any).provider_role === request?.provider_role) &&
             typeof row.lat === "number" &&
             typeof row.lng === "number"
           ) {
