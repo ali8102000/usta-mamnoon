@@ -477,7 +477,31 @@ export default function RequestDetail() {
         .select("provider_id,team_size,accepted_at")
         .eq("request_id", id)
         .order("accepted_at", { ascending: true });
-      if (!membersError) setServiceProviders(members ?? []);
+      if (membersError) {
+        console.warn("[service request providers] membership read failed; using assigned-provider fallback:", membersError.message);
+      }
+      const normalizedMembers = [...(members ?? [])];
+      // The primary provider is also the accepted service provider. Keep the
+      // customer-facing headcount correct if membership visibility lags or its
+      // SELECT policy temporarily prevents the row from being returned.
+      if (data?.provider_id && !normalizedMembers.some((member: any) => member.provider_id === data.provider_id)) {
+        let primaryTeamSize = 1;
+        const { data: primaryWorker } = await (supabase as any)
+          .from("worker_profiles")
+          .select("team_size")
+          .eq("user_id", data.provider_id)
+          .maybeSingle();
+        const savedTeamSize = Number(primaryWorker?.team_size);
+        if (Number.isFinite(savedTeamSize) && savedTeamSize >= 1) {
+          primaryTeamSize = Math.min(10, Math.floor(savedTeamSize));
+        }
+        normalizedMembers.push({
+          provider_id: data.provider_id,
+          team_size: primaryTeamSize,
+          accepted_at: data.accepted_at ?? null,
+        });
+      }
+      setServiceProviders(normalizedMembers);
     } else {
       setServiceProviders([]);
     }
