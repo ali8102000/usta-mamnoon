@@ -242,6 +242,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!requiresFreshPrivilegeCheck) setLoading(false);
     }
     try {
+      const driverProfileTable =
+        APP_VARIANT === "large_driver" ? "naqil_profiles" :
+        APP_VARIANT === "driver" ? "driver_profiles" : null;
+      const shouldLoadWorkerProfile = APP_VARIANT === "worker";
       const [profileResult, rolesResult, driverResult, workerResult] = await withStartupTimeout(Promise.all([
         supabase
           .from("profiles")
@@ -249,8 +253,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .eq("id", uid)
           .maybeSingle(),
         supabase.from("user_roles").select("role").eq("user_id", uid),
-        supabase.from("driver_profiles").select("user_id,vehicle_category,status").eq("user_id", uid).maybeSingle(),
-        supabase.from("worker_profiles").select("user_id,status").eq("user_id", uid).maybeSingle(),
+        driverProfileTable
+          ? (supabase as any).from(driverProfileTable).select("user_id,vehicle_category,status").eq("user_id", uid).maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+        shouldLoadWorkerProfile
+          ? supabase.from("worker_profiles").select("user_id,status").eq("user_id", uid).maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
       ]), 12000, "account_bootstrap_timeout");
 
       // Ignore stale lookups when a different account signed in while these
