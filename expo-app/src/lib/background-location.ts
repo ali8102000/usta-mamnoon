@@ -163,7 +163,18 @@ TaskManager.defineTask(PROVIDER_PRESENCE_TASK, async ({ data, error }) => {
       .select("available, status")
       .eq("user_id", context.userId)
       .maybeSingle();
-    if (profileError || !profile?.available || profile.status !== "approved") {
+    // Match the foreground approval gate: verification is role-specific and
+    // authoritative; profile.status is only a legacy fallback.
+    const { data: verification, error: verificationError } = await (supabase as any)
+      .from("provider_verifications")
+      .select("status")
+      .eq("user_id", context.userId)
+      .eq("provider_type", context.role)
+      .maybeSingle();
+    const approved = verification?.status
+      ? verification.status === "approved"
+      : profile?.status === "approved";
+    if (profileError || verificationError || !profile?.available || !approved) {
       await Location.stopLocationUpdatesAsync(PROVIDER_PRESENCE_TASK).catch(() => undefined);
       await SecureStore.deleteItemAsync(PROVIDER_CONTEXT_KEY);
       return;
