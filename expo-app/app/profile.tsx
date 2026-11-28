@@ -58,6 +58,8 @@ export default function ProfileScreen() {
   const [walletTopupAmount, setWalletTopupAmount] = useState("");
   const [showRecentTransactions, setShowRecentTransactions] = useState(false);
   const [providerEarnings, setProviderEarnings] = useState<EarningsSummary>({ last24h: 0, week: 0, month: 0, year: 0 });
+  const [providerPayables, setProviderPayables] = useState<{ outstanding_iqd: number; payable_iqd: number; settled_iqd: number; coupon_subsidy_iqd: number } | null>(null);
+  const [providerPayablesLoading, setProviderPayablesLoading] = useState(false);
   const [providerWallet, setProviderWallet] = useState<DriverWallet | null>(null);
   const [providerTransactions, setProviderTransactions] = useState<WalletTransaction[]>([]);
   const [providerWalletOffline, setProviderWalletOffline] = useState(false);
@@ -120,6 +122,31 @@ export default function ProfileScreen() {
     const refreshTimer = setInterval(() => { void loadAccountWallet(); }, 15_000);
     return () => { active = false; clearInterval(refreshTimer); };
   }, [user?.id]);
+
+  useEffect(() => {
+    let active = true;
+    if (!user?.id || !isProvider) {
+      setProviderPayables(null);
+      setProviderPayablesLoading(false);
+      return () => { active = false; };
+    }
+    const loadProviderPayables = async () => {
+      setProviderPayablesLoading(true);
+      try {
+        const { data, error } = await (supabase as any).rpc("get_my_provider_payables_summary");
+        if (error) throw error;
+        if (active) setProviderPayables(data ?? null);
+      } catch (error) {
+        console.warn("[provider payables] Unable to refresh company payable:", error);
+        if (active) setProviderPayables(null);
+      } finally {
+        if (active) setProviderPayablesLoading(false);
+      }
+    };
+    void loadProviderPayables();
+    const refreshTimer = setInterval(() => { void loadProviderPayables(); }, 15000);
+    return () => { active = false; clearInterval(refreshTimer); };
+  }, [user?.id, isProvider]);
 
   useEffect(() => {
     let active = true;
@@ -372,6 +399,7 @@ export default function ProfileScreen() {
         ))}
       </View>
       {isProvider ? (
+        <>
         <View style={styles.walletEarningsRow}>
           <View style={[styles.walletCard, styles.compactWalletCard]}>
             {accountWalletOffline && <View style={styles.walletOfflineNotice}><Text style={styles.walletOfflineText}>تعذر تحديث الرصيد من الخادم حالياً.</Text></View>}
@@ -419,6 +447,24 @@ export default function ProfileScreen() {
             )}
           </View>
         </View>
+        <View style={[styles.walletCard, { marginTop: 12, borderColor: palette.gold, borderWidth: 1.5 }]}>
+          <Text style={styles.walletTitle}>الأموال المستحقة من شركة ممنون</Text>
+          <Text style={styles.compactWalletBalance}>
+            {providerPayablesLoading && !providerPayables ? "جارٍ التحميل..." : Number(providerPayables?.outstanding_iqd ?? 0).toLocaleString("en")} د.ع
+          </Text>
+          <Text style={{ color: palette.muted, fontSize: 11, textAlign: "right", marginTop: 4 }}>
+            هذا المبلغ مستحق لك من الشركة بعد إكمال الطلبات، ولا يدخل ضمن رصيد الكوبونات.
+          </Text>
+          {Number(providerPayables?.coupon_subsidy_iqd ?? 0) > 0 && (
+            <Text style={{ color: palette.success, fontSize: 11, fontWeight: "800", textAlign: "right", marginTop: 6 }}>
+              يتضمن دعم كوبونات مستحق: {Number(providerPayables?.coupon_subsidy_iqd ?? 0).toLocaleString("en")} د.ع
+            </Text>
+          )}
+          <Text style={{ color: palette.muted, fontSize: 10, textAlign: "right", marginTop: 5 }}>
+            إجمالي المستحق: {Number(providerPayables?.payable_iqd ?? 0).toLocaleString("en")} د.ع · المصروف: {Number(providerPayables?.settled_iqd ?? 0).toLocaleString("en")} د.ع
+          </Text>
+        </View>
+        </>
       ) : (
         <View style={[styles.walletCard, styles.customerWalletCard]}>
           {accountWalletOffline && <View style={styles.walletOfflineNotice}><Text style={styles.walletOfflineText}>تعذر تحديث الرصيد من الخادم حالياً.</Text></View>}
