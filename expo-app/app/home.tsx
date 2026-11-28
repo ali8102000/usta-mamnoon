@@ -324,7 +324,9 @@ export default function HomeScreen() {
       const message =
         code === "foreground_location_denied"
           ? "اسمح لممنون باستخدام موقعك أثناء استعمال التطبيق حتى تستقبل الطلبات."
-          : code === "location_services_disabled"
+          : code === "background_location_denied"
+            ? "حتى يستمر استقبال الطلبات إذا صغّرت التطبيق، فعّل إذن الموقع «السماح طوال الوقت» من إعدادات ممنون، ثم ارجع وشغّل الاستقبال."
+            : code === "location_services_disabled"
             ? "خدمات الموقع مطفّية. شغّل GPS من إعدادات الهاتف وحاول مرة ثانية."
             : code === "location_fix_unavailable"
               ? "ما حصلنا إشارة موقع كافية. اطلع لمكان مفتوح وخلي GPS شغال ثم حاول مرة ثانية."
@@ -334,20 +336,20 @@ export default function HomeScreen() {
     }
 
     async function startPresence() {
-      // Require one fresh, usable fix before the provider is considered online.
+      // Require a fresh GPS fix and a running Android background service
+      // before publishing the provider as online and dispatchable.
       const first = await getFreshProviderLocation();
-      await publishPresence(first);
-      if (!mounted) return;
-
-      // Background tracking is an enhancement. A denied background permission
-      // must not prevent foreground availability while Mamnoon remains open.
       const backgroundTrackingEnabled = await startProviderPresenceBackgroundLocation({
         userId,
         role: selectedRole as "driver" | "large_driver" | "worker",
       }).catch((error) => {
-        console.warn("[Mamnoon] background presence unavailable; keeping foreground tracking:", error);
+        console.warn("[Mamnoon] background presence could not start:", error);
         return false;
       });
+      if (!backgroundTrackingEnabled) throw new Error("background_location_denied");
+
+      await publishPresence(first);
+      if (!mounted) return;
 
       try {
         subscription = await Location.watchPositionAsync(
