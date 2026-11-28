@@ -62,6 +62,9 @@ jobs:
           npm install --global yarn@1.22.22
           yarn install --frozen-lockfile
 
+      - name: Verify native route and screen parity
+        run: yarn test:parity
+
       - name: Verify app identity and Expo configuration
         run: |
           node - <<'NODE'
