@@ -132,11 +132,12 @@ if (!nativeAuthContextSource.includes("clearCachedAuthProfile(previousId)")) {
 }
 
 const nativeAuthSource = await readSource("app/auth.tsx");
-if (!nativeAuthSource.includes('useState<Mode>("signup")')) {
-  missing.push("Native auth must open in the same default signup mode as web.");
-}
-if (nativeAuthSource.includes("loginMethod") || !nativeAuthSource.includes("رقم الهاتف أو البريد")) {
-  missing.push("Native auth must use the web-equivalent combined phone/email sign-in field.");
+if (!nativeAuthSource.includes('useState<AuthStep>("phone")') ||
+    !nativeAuthSource.includes("signInWithOtp") ||
+    !nativeAuthSource.includes('type: "sms"') ||
+    !nativeAuthSource.includes("verifyOtp") ||
+    !nativeAuthSource.includes("isValidPhone")) {
+  missing.push("Native phone authentication must validate the Iraqi phone number, request an SMS OTP, and verify the six-digit code.");
 }
 if (nativeAuthSource.includes('router.push("/welcome")')) {
   missing.push("Native sign-in must not show the obsolete manual welcome-entry link.");
@@ -144,7 +145,7 @@ if (nativeAuthSource.includes('router.push("/welcome")')) {
 if (!nativeAuthContextSource.includes("rolePreferenceKey") ||
     !nativeAuthContextSource.includes("restoreActiveRole") ||
     !nativeAuthContextSource.includes("setActiveRole") ||
-    !nativeAuthContextSource.includes("SecureStore.setItemAsync(rolePreferenceKey(uid), role)") ||
+    !nativeAuthContextSource.includes("SecureStore.setItemAsync(rolePreferenceKey(uid), role), 8000") ||
     !nativeAuthSource.includes('useState<Mode>("signup")')) {
   missing.push("Native account roles must persist the last registered section and restore it on the next app launch.");
 }
@@ -154,8 +155,10 @@ const aabWorkflowSource = await readSource("../.github/workflows/build-android-a
 if (apkWorkflowSource.includes("  pull_request:")) {
   missing.push("Full APK builds should run on main only; PRs use the faster mobile CI export checks.");
 }
-if (!aabWorkflowSource.includes("cancel-in-progress: true")) {
-  missing.push("AAB builds must cancel obsolete main builds when a newer release commit arrives.");
+if (!aabWorkflowSource.includes("concurrency:") ||
+    !aabWorkflowSource.includes("group: android-aab-customer-") ||
+    !aabWorkflowSource.includes("cancel-in-progress: false")) {
+  missing.push("Signed Play Store AAB builds must keep a stable concurrency group and must not cancel an in-progress signed release.");
 }
 
 const nativeThemeSource = await readSource("src/styles/theme.ts");
