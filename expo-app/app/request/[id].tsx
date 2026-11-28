@@ -245,7 +245,7 @@ export default function RequestDetail() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [largeOffers, setLargeOffers] = useState<any[]>([]);
   const [myLargeOffer, setMyLargeOffer] = useState<any>(null);
-  const [largeOfferPrice, setLargeOfferPrice] = useState("");
+  const [largeOfferPrice, setLargeOfferPrice] = useState("60000");
   const [largeOfferMessage, setLargeOfferMessage] = useState("");
   const [largeOfferBusy, setLargeOfferBusy] = useState(false);
   const [acceptingLargeOffer, setAcceptingLargeOffer] = useState<string | null>(null);
@@ -582,7 +582,8 @@ export default function RequestDetail() {
           .eq("provider_id", user?.id)
           .maybeSingle();
         setMyLargeOffer(ownOffer ?? null);
-        if (ownOffer?.proposed_price) setLargeOfferPrice(String(ownOffer.proposed_price));
+        if (ownOffer?.proposed_price && Number(ownOffer.proposed_price) % 5000 === 0 && Number(ownOffer.proposed_price) <= 500000) setLargeOfferPrice(String(ownOffer.proposed_price));
+         else setLargeOfferPrice("60000");
         if (ownOffer?.offer_message) setLargeOfferMessage(ownOffer.offer_message);
       }
     } else {
@@ -1311,10 +1312,9 @@ export default function RequestDetail() {
 
   async function sendLargeVehicleOffer() {
     if (!user || largeOfferBusy) return;
-    const digits = normalizeCashDigits(largeOfferPrice);
-    const amount = digits ? Number(digits) : NaN;
-    if (!Number.isSafeInteger(amount) || amount < 250 || amount > 50000 || amount % 250 !== 0) {
-      Alert.alert("السعر غير صحيح", "اكتب أجرتك من 250 إلى 50,000 دينار، ويكون المبلغ من مضاعفات 250.");
+    const amount = Number(largeOfferPrice);
+    if (!Number.isSafeInteger(amount) || amount < 5000 || amount > 500000 || amount % 5000 !== 0) {
+      Alert.alert("السعر غير صحيح", "اختَر سعراً من الأزرار، والزيادة تكون 5,000 دينار.");
       return;
     }
     setLargeOfferBusy(true);
@@ -2053,7 +2053,7 @@ export default function RequestDetail() {
           <View style={styles.largeOffersCard}>
             <Text style={styles.largeOffersTitle}>🚚 طلب سيارة كبيرة</Text>
             <Text style={{ color: palette.muted, fontSize: 12, textAlign: "right", lineHeight: 20, marginBottom: 10 }}>
-              اختَر الطريقة المناسبة: اقبل أجرة الزبون مباشرة إذا تناسبك، أو اكتب أجرتك وأرسل عرضاً جديداً.
+              اختَر الطريقة المناسبة: اقبل أجرة الزبون أو حدّد عرضك من الأزرار وزد 5,000 دينار بكل ضغطة.
             </Text>
             {Number(request.customer_price ?? request.customer_payable ?? request.price_estimate ?? 0) > 0 ? (
               <View style={{ backgroundColor: palette.goldSoft, borderWidth: 1, borderColor: palette.gold, borderRadius: 14, padding: 12, marginBottom: 10 }}>
@@ -2076,17 +2076,19 @@ export default function RequestDetail() {
               <Text style={styles.largeOffersEmpty}>عرضك الحالي: {Number(myLargeOffer.proposed_price).toLocaleString("en")} د.ع — تگدر تعدله وترسله من جديد.</Text>
             ) : null}
             <Text style={{ color: palette.ink, fontSize: 12, fontWeight: "900", textAlign: "right", marginTop: 5 }}>أجرتك المقترحة (دينار عراقي)</Text>
-            <TextInput
-              style={styles.largeOfferInput}
-              value={largeOfferPrice}
-              onChangeText={(value) => setLargeOfferPrice(normalizeCashDigits(value))}
-              placeholder="مثال: 25000"
-              placeholderTextColor="#94a3b8"
-              keyboardType="number-pad"
-              editable={!largeOfferBusy && !acceptingLargeRequest}
-            />
+            <Text style={{ color: palette.brand, fontSize: 23, fontWeight: "900", textAlign: "center", marginTop: 6 }}>{Number(largeOfferPrice).toLocaleString("en")} د.ع</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 10, justifyContent: "center" }}>
+              {[60000, 75000, 100000, 125000, 150000].map((value) => (
+                <TouchableOpacity key={value} onPress={() => setLargeOfferPrice(String(value))} disabled={largeOfferBusy || acceptingLargeRequest} style={{ paddingVertical: 9, paddingHorizontal: 11, borderRadius: 11, borderWidth: 1, borderColor: Number(largeOfferPrice) === value ? palette.brand : palette.line, backgroundColor: Number(largeOfferPrice) === value ? palette.brandSoft : palette.surface }}>
+                  <Text style={{ color: Number(largeOfferPrice) === value ? palette.brand : palette.ink, fontSize: 12, fontWeight: "900" }}>{value / 1000} ألف</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity onPress={() => setLargeOfferPrice(String(Math.min(500000, Number(largeOfferPrice || 60000) + 5000)))} disabled={largeOfferBusy || acceptingLargeRequest || Number(largeOfferPrice) >= 500000} style={{ marginTop: 9, borderRadius: 12, paddingVertical: 12, alignItems: "center", backgroundColor: palette.gold, opacity: largeOfferBusy || acceptingLargeRequest || Number(largeOfferPrice) >= 500000 ? 0.5 : 1 }}>
+              <Text style={{ color: palette.brandDeep, fontWeight: "900", fontSize: 15 }}>＋ زيادة 5,000 دينار</Text>
+            </TouchableOpacity>
             <Text style={{ color: palette.muted, fontSize: 10, textAlign: "right", marginTop: 5 }}>
-              من 250 إلى 50,000 دينار، ويكون من مضاعفات 250.
+              اختَر مبلغاً مختصراً أو زد السعر 5,000 دينار بكل ضغطة. الحد الأعلى 500,000.
             </Text>
             <Text style={{ color: palette.ink, fontSize: 12, fontWeight: "900", textAlign: "right", marginTop: 12 }}>ملاحظة للزبون (اختياري)</Text>
             <TextInput
