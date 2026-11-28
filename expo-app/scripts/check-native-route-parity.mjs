@@ -149,8 +149,8 @@ if (!nativeAuthContextSource.includes("rolePreferenceKey") ||
   missing.push("Native account roles must persist the last registered section and restore it on the next app launch.");
 }
 
-const apkWorkflowSource = await readSource("../.github/workflows/android-apk.yml");
-const aabWorkflowSource = await readSource("../.github/workflows/android-aab.yml");
+const apkWorkflowSource = await readSource("../.github/workflows/build-android-apk.yml");
+const aabWorkflowSource = await readSource("../.github/workflows/build-android-aab.yml");
 if (apkWorkflowSource.includes("  pull_request:")) {
   missing.push("Full APK builds should run on main only; PRs use the faster mobile CI export checks.");
 }
