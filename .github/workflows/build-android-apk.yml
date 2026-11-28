@@ -95,7 +95,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends ffmpeg
-          ffmpeg -hide_banner -loglevel error -y -i assets/mamnoon-launch.webp -frames:v 1 -vf format=rgb24 assets/mamnoon-launch.png
+          if ! ffmpeg -hide_banner -loglevel error -y -i assets/mamnoon-launch.webp -frames:v 1 -vf format=rgb24 assets/mamnoon-launch.png; then
+            echo 'Splash WebP is not decodable; using the bundled PNG logo as a safe native splash fallback.'
+            cp assets/mamnoon-logo.png assets/mamnoon-launch.png
+          fi
           test -s assets/mamnoon-launch.png
           file assets/mamnoon-launch.png
 
