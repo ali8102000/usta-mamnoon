@@ -281,7 +281,8 @@ export async function startMamnoonBackgroundLocation(context: TrackingContext) {
   const alreadyStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
   if (alreadyStarted) await Location.stopLocationUpdatesAsync(LOCATION_TASK);
   await Location.startLocationUpdatesAsync(LOCATION_TASK, {
-    accuracy: Location.Accuracy.Balanced,
+    // Active-trip route tracking needs precise fixes while the app is backgrounded.
+    accuracy: Location.Accuracy.High,
     timeInterval: 5000,
     distanceInterval: 10,
     pausesUpdatesAutomatically: false,
