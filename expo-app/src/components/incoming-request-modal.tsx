@@ -103,6 +103,7 @@ export function IncomingRequestModal() {
   const loadSequence = useRef(0);
   const currentOfferId = useRef<string | null>(null);
   const lastNotifiedOfferId = useRef<string | null>(null);
+  const lastRecoveryAttemptAt = useRef(0);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
 
   const loadOffer = useCallback(async () => {
@@ -114,6 +115,19 @@ export function IncomingRequestModal() {
       setAttachmentUrl(null);
       return;
     }
+    // When a provider comes online after a request was created, recover any still-live
+    // request that falls inside the dispatch rings already opened for this request.
+    if (Date.now() - lastRecoveryAttemptAt.current >= 5000) {
+      lastRecoveryAttemptAt.current = Date.now();
+      const { error: recoveryError } = await (supabase as any).rpc(
+        "recover_available_provider_offers",
+        { p_provider_role: activeRole },
+      );
+      if (recoveryError) {
+        console.warn("[incoming-offer] Late request recovery failed:", recoveryError.message);
+      }
+    }
+
     const { data, error } = await (supabase as any)
       .from("request_offers")
       .select("id, request_id, provider_role, distance_km, expires_at, service_requests!inner(id, type, status, provider_role, vehicle_category, vehicle_type, pickup_text, dest_text, notes, attachment_path, work_description, price_estimate, customer_price, pricing_mode, work_hours, workers_count, service_urgency_enabled, large_vehicle_urgency_enabled, taxi_urgency_enabled, taxi_urgency_percent, service_id, services(name_ar, slug, icon))")
@@ -188,7 +202,7 @@ export function IncomingRequestModal() {
         });
       })().catch((error) => console.warn("[incoming-offer] Local notification failed:", error));
     }
-  }, [user, canReceive, attachmentPath, attachmentUrl]);
+  }, [user, activeRole, canReceive, attachmentPath, attachmentUrl]);
 
   useEffect(() => {
     void loadOffer();
