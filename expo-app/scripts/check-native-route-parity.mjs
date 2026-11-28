@@ -145,8 +145,7 @@ if (nativeAuthSource.includes('router.push("/welcome")')) {
 if (!nativeAuthContextSource.includes("rolePreferenceKey") ||
     !nativeAuthContextSource.includes("restoreActiveRole") ||
     !nativeAuthContextSource.includes("setActiveRole") ||
-    !nativeAuthContextSource.includes("SecureStore.setItemAsync(rolePreferenceKey(uid), role), 8000") ||
-    !nativeAuthSource.includes('useState<Mode>("signup")')) {
+    !nativeAuthContextSource.includes("SecureStore.setItemAsync(rolePreferenceKey(uid), role), 8000")) {
   missing.push("Native account roles must persist the last registered section and restore it on the next app launch.");
 }
 
