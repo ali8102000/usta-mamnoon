@@ -95,6 +95,7 @@ export function IncomingRequestModal() {
   const [visible, setVisible] = useState(false);
   const [largeOfferPrice, setLargeOfferPrice] = useState("60000");
   const [largeOfferMessage, setLargeOfferMessage] = useState("");
+  const [offerEditorOpen, setOfferEditorOpen] = useState(false);
   const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
   const [attachmentPath, setAttachmentPath] = useState<string | null>(null);
   const loadSequence = useRef(0);
@@ -176,6 +177,7 @@ export function IncomingRequestModal() {
       currentOfferId.current = data.id;
       setLargeOfferPrice("60000");
       setLargeOfferMessage("");
+      setOfferEditorOpen(false);
     }
     setOffer(data as Offer);
     setVisible(true);
@@ -279,7 +281,7 @@ export function IncomingRequestModal() {
         _request_id: offer.request_id, _price: price, _message: largeOfferMessage.trim() || null,
       });
       if (error) throw error;
-      setVisible(false); setOffer(null); setLargeOfferPrice("60000"); setLargeOfferMessage("");
+      setVisible(false); setOffer(null); setLargeOfferPrice("60000"); setLargeOfferMessage(""); setOfferEditorOpen(false);
       Alert.alert("تم إرسال عرض السعر", "وصل عرضك إلى الزبون، وسيختار العرض المناسب.");
     } catch (error) {
       Alert.alert("تعذر إرسال العرض", error instanceof Error ? error.message : "حاول مرة ثانية.");
@@ -460,28 +462,32 @@ export function IncomingRequestModal() {
                   <Text style={styles.detailValue}>{request?.services?.name_ar ?? "خدمة منزلية"} · الأجر قابل للتفاوض</Text>
                 </>
               )}
-              <Text style={{ color: palette.ink, fontSize: 12, fontWeight: "900", textAlign: "right", marginTop: 12 }}>اختَر أجرتك (دينار عراقي)</Text>
-              <Text style={{ color: palette.brand, fontSize: 23, fontWeight: "900", textAlign: "center", marginTop: 5 }}>{Number(largeOfferPrice).toLocaleString("en")} د.ع</Text>
-              <View style={{ flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", marginTop: 8 }}>
-                <TouchableOpacity
-                  onPress={() => setLargeOfferPrice(String(Math.min(500000, Number(largeOfferPrice || 60000) + 5000)))}
-                  disabled={Boolean(busy) || Number(largeOfferPrice) >= 500000}
-                  accessibilityRole="button"
-                  accessibilityLabel="زيادة الأجرة خمسة آلاف دينار"
-                  style={{ width: 46, height: 46, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: palette.gold, opacity: busy || Number(largeOfferPrice) >= 500000 ? 0.5 : 1, elevation: 2 }}
-                >
-                  <Text style={{ color: palette.brandDeep, fontWeight: "900", fontSize: 29, lineHeight: 34 }}>＋</Text>
-                </TouchableOpacity>
-                <Text style={{ color: palette.muted, fontSize: 10, marginRight: 10 }}>كل ضغطة تزيد 5,000 د.ع</Text>
-              </View>
-              <Text style={{ color: palette.muted, fontSize: 10, textAlign: "center", marginTop: 5 }}>أعلى أجرة مسموحة 500,000 دينار</Text>
-              <TextInput
-                value={largeOfferMessage}
-                onChangeText={setLargeOfferMessage}
-                placeholder="ملاحظة للزبون (اختياري)"
-                maxLength={500}
-                style={{ borderWidth: 1, borderColor: palette.line, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: palette.ink, textAlign: "right", marginTop: 10 }}
-              />
+              {offerEditorOpen ? (
+                <>
+                  <Text style={{ color: palette.ink, fontSize: 12, fontWeight: "900", textAlign: "right", marginTop: 12 }}>اختَر أجرتك (دينار عراقي)</Text>
+                  <Text style={{ color: palette.brand, fontSize: 23, fontWeight: "900", textAlign: "center", marginTop: 5 }}>{Number(largeOfferPrice).toLocaleString("en")} د.ع</Text>
+                  <View style={{ flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", marginTop: 8 }}>
+                    <TouchableOpacity
+                      onPress={() => setLargeOfferPrice(String(Math.min(500000, Number(largeOfferPrice || 60000) + 5000)))}
+                      disabled={Boolean(busy) || Number(largeOfferPrice) >= 500000}
+                      accessibilityRole="button"
+                      accessibilityLabel="زيادة الأجرة خمسة آلاف دينار"
+                      style={{ width: 46, height: 46, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: palette.gold, opacity: busy || Number(largeOfferPrice) >= 500000 ? 0.5 : 1, elevation: 2 }}
+                    >
+                      <Text style={{ color: palette.brandDeep, fontWeight: "900", fontSize: 29, lineHeight: 34 }}>＋</Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: palette.muted, fontSize: 10, marginRight: 10 }}>كل ضغطة تزيد 5,000 د.ع</Text>
+                  </View>
+                  <Text style={{ color: palette.muted, fontSize: 10, textAlign: "center", marginTop: 5 }}>أعلى أجرة مسموحة 500,000 دينار</Text>
+                  <TextInput
+                    value={largeOfferMessage}
+                    onChangeText={setLargeOfferMessage}
+                    placeholder="ملاحظة للزبون (اختياري)"
+                    maxLength={500}
+                    style={{ borderWidth: 1, borderColor: palette.line, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: palette.ink, textAlign: "right", marginTop: 10 }}
+                  />
+                </>
+              ) : null}
               {isLargeVehicle && (
                 <>
                   <TouchableOpacity style={[styles.action, styles.accept, { marginTop: 10 }]} onPress={() => void acceptLargeVehicleRequest()} disabled={Boolean(busy) || remainingSeconds <= 0 || amount == null}>
@@ -490,8 +496,12 @@ export function IncomingRequestModal() {
                   {amount == null ? <Text style={{ color: palette.muted, fontSize: 11, textAlign: "center", marginTop: 6 }}>القبول المباشر يحتاج أجرة محددة من الزبون</Text> : null}
                 </>
               )}
-              <TouchableOpacity style={[styles.action, styles.accept, { marginTop: 10 }]} onPress={() => void (isLargeVehicle ? sendLargeVehicleOffer() : sendWorkerServiceOffer())} disabled={Boolean(busy) || remainingSeconds <= 0}>
-                {busy === "quote" ? <ActivityIndicator color="#fff" /> : <Text style={styles.acceptText}>{isLargeVehicle ? "إرسال عرض السعر" : "إرسال أجرة الفني"}</Text>}
+              <TouchableOpacity
+                style={[styles.action, styles.accept, { marginTop: 10 }]}
+                onPress={() => offerEditorOpen ? void (isLargeVehicle ? sendLargeVehicleOffer() : sendWorkerServiceOffer()) : setOfferEditorOpen(true)}
+                disabled={Boolean(busy) || remainingSeconds <= 0}
+              >
+                {busy === "quote" ? <ActivityIndicator color="#fff" /> : <Text style={styles.acceptText}>{offerEditorOpen ? "تأكيد وإرسال العرض" : (isLargeVehicle ? "إرسال عرض السعر" : "إرسال أجرة الفني")}</Text>}
               </TouchableOpacity>
               <TouchableOpacity style={[styles.action, styles.reject, { marginTop: 8 }]} onPress={() => void respond("reject")} disabled={Boolean(busy)}>
                 <Text style={styles.rejectText}>تجاهل الطلب</Text>
