@@ -163,7 +163,18 @@ TaskManager.defineTask(PROVIDER_PRESENCE_TASK, async ({ data, error }) => {
       .select("available, status")
       .eq("user_id", context.userId)
       .maybeSingle();
-    if (profileError || !profile?.available || profile.status !== "approved") {
+    // Match the foreground approval gate: verification is role-specific and
+    // authoritative; profile.status is only a legacy fallback.
+    const { data: verification, error: verificationError } = await (supabase as any)
+      .from("provider_verifications")
+      .select("status")
+      .eq("user_id", context.userId)
+      .eq("provider_type", context.role)
+      .maybeSingle();
+    const approved = verification?.status
+      ? verification.status === "approved"
+      : profile?.status === "approved";
+    if (profileError || verificationError || !profile?.available || !approved) {
       await Location.stopLocationUpdatesAsync(PROVIDER_PRESENCE_TASK).catch(() => undefined);
       await SecureStore.deleteItemAsync(PROVIDER_CONTEXT_KEY);
       return;
@@ -300,4 +311,92 @@ export async function stopMamnoonBackgroundLocation() {
     await Location.stopLocationUpdatesAsync(LOCATION_TASK);
   }
   await SecureStore.deleteItemAsync(CONTEXT_KEY);
+}
+
+
+/**
+ * Reconcile persisted location sessions when the app is opened again.
+ * Android may stop a task when the process is reclaimed; if the user opens
+ * Mamnoon again, restore only sessions that are still valid on the server.
+ */
+export async function recoverBackgroundLocationTasks(expectedUserId: string) {
+  const { data: authData, error: authError } = await supabase.auth.getSession();
+  if (authError || authData.session?.user.id !== expectedUserId) return;
+
+  const requestRaw = await SecureStore.getItemAsync(CONTEXT_KEY);
+  if (requestRaw) {
+    try {
+      const context = JSON.parse(requestRaw) as TrackingContext;
+      const { data: request, error: requestError } = await (supabase as any)
+        .from("service_requests")
+        .select("customer_id, provider_id, provider_role, status, type, provider_arrived_at")
+        .eq("id", context.requestId)
+        .maybeSingle();
+      const { data: membership } = context.role === "provider" && context.providerRole === "worker" && request?.type === "service"
+        ? await (supabase as any).from("service_request_providers").select("provider_id")
+            .eq("request_id", context.requestId).eq("provider_id", context.userId).maybeSingle()
+        : { data: null };
+      const participant = request && (
+        (context.role === "customer" && request.customer_id === context.userId) ||
+        (context.role === "provider" && request.provider_id === context.userId && request.provider_role === context.providerRole) ||
+        (context.role === "provider" && context.providerRole === "worker" && request.type === "service" && Boolean(membership))
+      );
+      const active = request && ["accepted", "in_progress"].includes(request.status);
+      const providerArrived = context.role === "provider" && request?.type === "service" && Boolean(request.provider_arrived_at);
+      if (requestError || context.userId !== expectedUserId || !participant || !active || providerArrived) {
+        await Location.stopLocationUpdatesAsync(LOCATION_TASK).catch(() => undefined);
+        await SecureStore.deleteItemAsync(CONTEXT_KEY);
+      } else if (!(await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK))) {
+        await Location.startLocationUpdatesAsync(LOCATION_TASK, {
+          accuracy: Location.Accuracy.Balanced,
+          timeInterval: 5000,
+          distanceInterval: 10,
+          pausesUpdatesAutomatically: false,
+          showsBackgroundLocationIndicator: true,
+          foregroundService: {
+            notificationTitle: "ممنون يشارك موقعك أثناء الطلب",
+            notificationBody: "تتبع الموقع يعمل فقط خلال الطلب النشط ويمكنك إيقافه بإنهاء الطلب.",
+            notificationColor: "#D4AF37",
+          },
+        });
+      }
+    } catch (error) {
+      console.warn("[Mamnoon GPS recovery] active request recovery failed:", error);
+    }
+  }
+
+  const presenceRaw = await SecureStore.getItemAsync(PROVIDER_CONTEXT_KEY);
+  if (presenceRaw) {
+    try {
+      const context = JSON.parse(presenceRaw) as ProviderPresenceContext;
+      const table = context.role === "worker" ? "worker_profiles" : context.role === "large_driver" ? "naqil_profiles" : "driver_profiles";
+      const { data: profile, error: profileError } = await (supabase as any)
+        .from(table).select("available, status").eq("user_id", context.userId).maybeSingle();
+      const { data: verification, error: verificationError } = await (supabase as any)
+        .from("provider_verifications").select("status")
+        .eq("user_id", context.userId).eq("provider_type", context.role).maybeSingle();
+      const approved = verification?.status
+        ? verification.status === "approved"
+        : profile?.status === "approved";
+      if (profileError || verificationError || context.userId !== expectedUserId || !profile?.available || !approved) {
+        await Location.stopLocationUpdatesAsync(PROVIDER_PRESENCE_TASK).catch(() => undefined);
+        await SecureStore.deleteItemAsync(PROVIDER_CONTEXT_KEY);
+      } else if (!(await Location.hasStartedLocationUpdatesAsync(PROVIDER_PRESENCE_TASK))) {
+        await Location.startLocationUpdatesAsync(PROVIDER_PRESENCE_TASK, {
+          accuracy: Location.Accuracy.Balanced,
+          timeInterval: 30_000,
+          distanceInterval: 25,
+          pausesUpdatesAutomatically: false,
+          showsBackgroundLocationIndicator: true,
+          foregroundService: {
+            notificationTitle: "ممنون يستقبل الطلبات",
+            notificationBody: "موقعك يتحدث حتى تصلك طلبات قريبة أثناء استخدام تطبيقات أخرى.",
+            notificationColor: "#D4AF37",
+          },
+        });
+      }
+    } catch (error) {
+      console.warn("[Mamnoon GPS recovery] provider presence recovery failed:", error);
+    }
+  }
 }
