@@ -9,7 +9,7 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/mamnoon-launch.webp",
+      "image": "./assets/mamnoon-launch.png",
       "resizeMode": "cover",
       "backgroundColor": "#0800ff"
     },
