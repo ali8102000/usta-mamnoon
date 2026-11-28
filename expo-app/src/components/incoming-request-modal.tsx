@@ -84,9 +84,6 @@ const SERVICE_IMAGES: Record<string, number> = {
   general: service_general,
 }
 
-function roundPriceToNearest250(value: number) {
-  return Math.round(value / 250) * 250;
-}
 
 export function IncomingRequestModal() {
   const { user, activeRole } = useAuth();
