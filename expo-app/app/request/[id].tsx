@@ -590,6 +590,19 @@ export default function RequestDetail() {
       setLargeOffers([]);
       setMyLargeOffer(null);
     }
+    if (data?.type === "service" && data.customer_id !== user?.id && roles.includes("worker") && data.pricing_mode === "negotiable") {
+      const { data: ownServiceOffer } = await (supabase as any)
+        .from("request_offers")
+        .select("id, proposed_price, offer_message, status")
+        .eq("request_id", id)
+        .eq("provider_id", user?.id)
+        .eq("provider_role", "worker")
+        .maybeSingle();
+      setMyLargeOffer(ownServiceOffer ?? null);
+      if (ownServiceOffer?.proposed_price && Number(ownServiceOffer.proposed_price) % 5000 === 0 && Number(ownServiceOffer.proposed_price) <= 500000) setLargeOfferPrice(String(ownServiceOffer.proposed_price));
+      else setLargeOfferPrice("60000");
+      setLargeOfferMessage(ownServiceOffer?.offer_message ?? "");
+    }
     setLoading(false);
   }, [id, user?.id, roles]);
 
@@ -1345,6 +1358,34 @@ export default function RequestDetail() {
     } finally {
       setLargeOfferBusy(false);
     }
+  }
+
+  async function sendWorkerServiceOffer() {
+    if (!user || !request || largeOfferBusy) return;
+    const amount = Number(largeOfferPrice);
+    if (!Number.isSafeInteger(amount) || amount < 5000 || amount > 500000 || amount % 5000 !== 0) {
+      Alert.alert("السعر غير صحيح", "اختَر سعراً من الأزرار، والزيادة تكون 5,000 دينار.");
+      return;
+    }
+    setLargeOfferBusy(true);
+    try {
+      const { error } = await (supabase as any).rpc("submit_worker_service_offer", {
+        _request_id: id, _price: amount, _message: largeOfferMessage.trim() || null,
+      });
+      if (error) throw error;
+      Alert.alert("تم إرسال عرضك", "وصلت أجرتك المقترحة للزبون، ويگدر يوافق عليها.");
+      await loadRequest();
+    } catch (error: any) {
+      const raw = String(error?.message || "");
+      const message = raw.includes("worker_team_capacity_insufficient")
+        ? "عدد أفراد فريقك أقل من العدد المطلوب بالطلب."
+        : raw.includes("provider_has_active_request")
+          ? "عندك طلب آخر قيد التنفيذ. أكمله أولاً."
+          : raw.includes("invalid_offer_price")
+            ? "اختَر السعر من الأزرار، وبزيادة 5,000 دينار."
+            : raw;
+      Alert.alert("تعذر إرسال العرض", message || "تحقق من الإنترنت وحاول مرة ثانية.");
+    } finally { setLargeOfferBusy(false); }
   }
 
   async function acceptLargeVehicleRequest() {
@@ -2106,6 +2147,40 @@ export default function RequestDetail() {
               onPress={sendLargeVehicleOffer}
             >
               <Text style={styles.largeOfferAcceptText}>{largeOfferBusy ? "جارٍ إرسال العرض..." : myLargeOffer?.proposed_price ? "تحديث وإرسال العرض" : "إرسال عرض السعر للزبون"}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {request.type === "service" && request.pricing_mode === "negotiable" && !isCustomer && roles.includes("worker") && ["pending", "searching"].includes(request.status) && (
+          <View style={styles.largeOffersCard}>
+            <Text style={styles.largeOffersTitle}>🛠️ عرض أجرة الفني</Text>
+            <Text style={{ color: palette.muted, fontSize: 12, textAlign: "right", lineHeight: 20, marginBottom: 8 }}>
+              الزبون اختار التفاوض. حدّد أجرتك من الأزرار، وماكو إدخال يدوي للسعر.
+            </Text>
+            {myLargeOffer?.proposed_price ? (
+              <Text style={styles.largeOffersEmpty}>عرضك الحالي: {Number(myLargeOffer.proposed_price).toLocaleString("en")} د.ع — تگدر تحدّثه.</Text>
+            ) : null}
+            <Text style={{ color: palette.brand, fontSize: 23, fontWeight: "900", textAlign: "center", marginTop: 6 }}>{Number(largeOfferPrice).toLocaleString("en")} د.ع</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 10, justifyContent: "center" }}>
+              {[60000, 75000, 100000, 125000, 150000].map((value) => (
+                <TouchableOpacity key={value} onPress={() => setLargeOfferPrice(String(value))} disabled={largeOfferBusy} style={{ paddingVertical: 9, paddingHorizontal: 11, borderRadius: 11, borderWidth: 1, borderColor: Number(largeOfferPrice) === value ? palette.brand : palette.line, backgroundColor: Number(largeOfferPrice) === value ? palette.brandSoft : palette.surface }}>
+                  <Text style={{ color: Number(largeOfferPrice) === value ? palette.brand : palette.ink, fontSize: 12, fontWeight: "900" }}>{value / 1000} ألف</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity onPress={() => setLargeOfferPrice(String(Math.min(500000, Number(largeOfferPrice || 60000) + 5000)))} disabled={largeOfferBusy || Number(largeOfferPrice) >= 500000} style={{ marginTop: 9, borderRadius: 12, paddingVertical: 12, alignItems: "center", backgroundColor: palette.gold, opacity: largeOfferBusy || Number(largeOfferPrice) >= 500000 ? 0.5 : 1 }}>
+              <Text style={{ color: palette.brandDeep, fontWeight: "900", fontSize: 15 }}>＋ زيادة 5,000 دينار</Text>
+            </TouchableOpacity>
+            <TextInput
+              style={[styles.largeOfferInput, { minHeight: 76, textAlignVertical: "top" }]}
+              value={largeOfferMessage}
+              onChangeText={setLargeOfferMessage}
+              placeholder="ملاحظة للزبون (اختياري)"
+              placeholderTextColor="#94a3b8"
+              multiline
+              editable={!largeOfferBusy}
+            />
+            <TouchableOpacity style={[styles.largeOfferAccept, { opacity: largeOfferBusy ? 0.55 : 1 }]} disabled={largeOfferBusy} onPress={sendWorkerServiceOffer}>
+              <Text style={styles.largeOfferAcceptText}>{largeOfferBusy ? "جارٍ إرسال العرض..." : myLargeOffer?.proposed_price ? "تحديث وإرسال العرض" : "إرسال عرض الأجرة للزبون"}</Text>
             </TouchableOpacity>
           </View>
         )}
