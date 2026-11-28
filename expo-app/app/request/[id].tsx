@@ -247,6 +247,7 @@ export default function RequestDetail() {
   const [myLargeOffer, setMyLargeOffer] = useState<any>(null);
   const [largeOfferPrice, setLargeOfferPrice] = useState("60000");
   const [largeOfferMessage, setLargeOfferMessage] = useState("");
+  const [largeOfferEditorOpen, setLargeOfferEditorOpen] = useState(false);
   const [largeOfferBusy, setLargeOfferBusy] = useState(false);
   const [acceptingLargeOffer, setAcceptingLargeOffer] = useState<string | null>(null);
   const [acceptingLargeRequest, setAcceptingLargeRequest] = useState(false);
@@ -2179,21 +2180,25 @@ export default function RequestDetail() {
             {myLargeOffer?.proposed_price ? (
               <Text style={styles.largeOffersEmpty}>عرضك الحالي: {Number(myLargeOffer.proposed_price).toLocaleString("en")} د.ع — تگدر تحدّثه.</Text>
             ) : null}
-            <Text style={{ color: palette.brand, fontSize: 23, fontWeight: "900", textAlign: "center", marginTop: 6 }}>{Number(largeOfferPrice).toLocaleString("en")} د.ع</Text>
-            <TouchableOpacity onPress={() => setLargeOfferPrice(String(Math.min(500000, Number(largeOfferPrice || 0) + 5000)))} disabled={largeOfferBusy || Number(largeOfferPrice) >= 500000} style={{ marginTop: 9, borderRadius: 12, paddingVertical: 12, alignItems: "center", backgroundColor: palette.gold, opacity: largeOfferBusy || Number(largeOfferPrice) >= 500000 ? 0.5 : 1 }}>
-              <Text style={{ color: palette.brandDeep, fontWeight: "900", fontSize: 15 }}>＋ زيادة 5,000 دينار</Text>
-            </TouchableOpacity>
-            <TextInput
-              style={[styles.largeOfferInput, { minHeight: 76, textAlignVertical: "top" }]}
-              value={largeOfferMessage}
-              onChangeText={setLargeOfferMessage}
-              placeholder="ملاحظة للزبون (اختياري)"
-              placeholderTextColor="#94a3b8"
-              multiline
-              editable={!largeOfferBusy}
-            />
-            <TouchableOpacity style={[styles.largeOfferAccept, { opacity: largeOfferBusy ? 0.55 : 1 }]} disabled={largeOfferBusy} onPress={sendWorkerServiceOffer}>
-              <Text style={styles.largeOfferAcceptText}>{largeOfferBusy ? "جارٍ إرسال العرض..." : myLargeOffer?.proposed_price ? "تحديث وإرسال العرض" : "إرسال عرض الأجرة للزبون"}</Text>
+            {largeOfferEditorOpen ? (
+              <>
+                <Text style={{ color: palette.brand, fontSize: 23, fontWeight: "900", textAlign: "center", marginTop: 6 }}>{Number(largeOfferPrice).toLocaleString("en")} د.ع</Text>
+                <TouchableOpacity onPress={() => setLargeOfferPrice(String(Math.min(500000, Number(largeOfferPrice || 0) + 5000)))} disabled={largeOfferBusy || Number(largeOfferPrice) >= 500000} style={{ marginTop: 9, borderRadius: 12, paddingVertical: 12, alignItems: "center", backgroundColor: palette.gold, opacity: largeOfferBusy || Number(largeOfferPrice) >= 500000 ? 0.5 : 1 }}>
+                  <Text style={{ color: palette.brandDeep, fontWeight: "900", fontSize: 15 }}>＋ زيادة 5,000 دينار</Text>
+                </TouchableOpacity>
+                <TextInput
+                  style={[styles.largeOfferInput, { minHeight: 76, textAlignVertical: "top" }]}
+                  value={largeOfferMessage}
+                  onChangeText={setLargeOfferMessage}
+                  placeholder="ملاحظة للزبون (اختياري)"
+                  placeholderTextColor="#94a3b8"
+                  multiline
+                  editable={!largeOfferBusy}
+                />
+              </>
+            ) : null}
+            <TouchableOpacity style={[styles.largeOfferAccept, { opacity: largeOfferBusy ? 0.55 : 1 }]} disabled={largeOfferBusy} onPress={() => largeOfferEditorOpen ? void sendWorkerServiceOffer() : setLargeOfferEditorOpen(true)}>
+              <Text style={styles.largeOfferAcceptText}>{largeOfferBusy ? "جارٍ إرسال العرض..." : largeOfferEditorOpen ? "تأكيد وإرسال العرض" : myLargeOffer?.proposed_price ? "تعديل وإرسال عرضك" : "إرسال عرض الأجرة للزبون"}</Text>
             </TouchableOpacity>
           </View>
         )}
