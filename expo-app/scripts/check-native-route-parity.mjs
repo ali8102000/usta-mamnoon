@@ -155,7 +155,7 @@ if (apkWorkflowSource.includes("  pull_request:")) {
   missing.push("Full APK builds should run on main only; PRs use the faster mobile CI export checks.");
 }
 if (!aabWorkflowSource.includes("concurrency:") ||
-    !/^\\s*group: android-aab-[^\\n]+/m.test(aabWorkflowSource) ||
+    !/^\s*group: android-aab-[^\n]+/m.test(aabWorkflowSource) ||
     !aabWorkflowSource.includes("cancel-in-progress: false")) {
   missing.push("Signed Play Store AAB builds must keep a stable concurrency group and must not cancel an in-progress signed release.");
 }
