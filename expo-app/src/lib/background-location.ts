@@ -260,6 +260,7 @@ export async function startProviderPresenceBackgroundLocation(
       pausesUpdatesAutomatically: false,
       showsBackgroundLocationIndicator: true,
       foregroundService: {
+        killServiceOnDestroy: false,
         notificationTitle: "ممنون يستقبل الطلبات",
         notificationBody: "موقعك يتحدث حتى تصلك طلبات قريبة أثناء استخدام تطبيقات أخرى.",
         notificationColor: "#D4AF37",
@@ -295,10 +296,12 @@ export async function startMamnoonBackgroundLocation(context: TrackingContext) {
     // Active-trip route tracking needs precise fixes while the app is backgrounded.
     accuracy: Location.Accuracy.High,
     timeInterval: 5000,
-    distanceInterval: 10,
+    // Keep active-trip samples flowing even when the vehicle pauses.
+    distanceInterval: 0,
     pausesUpdatesAutomatically: false,
     showsBackgroundLocationIndicator: true,
     foregroundService: {
+      killServiceOnDestroy: false,
       notificationTitle: "ممنون يشارك موقعك أثناء الطلب",
       notificationBody: "تتبع الموقع يعمل فقط خلال الطلب النشط ويمكنك إيقافه بإنهاء الطلب.",
       notificationColor: "#D4AF37",
@@ -348,12 +351,14 @@ export async function recoverBackgroundLocationTasks(expectedUserId: string) {
         await SecureStore.deleteItemAsync(CONTEXT_KEY);
       } else if (!(await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK))) {
         await Location.startLocationUpdatesAsync(LOCATION_TASK, {
-          accuracy: Location.Accuracy.Balanced,
+          accuracy: Location.Accuracy.High,
           timeInterval: 5000,
-          distanceInterval: 10,
+          // Match the live registration after Android restores the task.
+          distanceInterval: 0,
           pausesUpdatesAutomatically: false,
           showsBackgroundLocationIndicator: true,
           foregroundService: {
+            killServiceOnDestroy: false,
             notificationTitle: "ممنون يشارك موقعك أثناء الطلب",
             notificationBody: "تتبع الموقع يعمل فقط خلال الطلب النشط ويمكنك إيقافه بإنهاء الطلب.",
             notificationColor: "#D4AF37",
@@ -389,6 +394,7 @@ export async function recoverBackgroundLocationTasks(expectedUserId: string) {
           pausesUpdatesAutomatically: false,
           showsBackgroundLocationIndicator: true,
           foregroundService: {
+            killServiceOnDestroy: false,
             notificationTitle: "ممنون يستقبل الطلبات",
             notificationBody: "موقعك يتحدث حتى تصلك طلبات قريبة أثناء استخدام تطبيقات أخرى.",
             notificationColor: "#D4AF37",
