@@ -270,7 +270,7 @@ export function IncomingRequestModal() {
     if (!offer || !isLargeVehicle || busy) return;
     const price = Number(largeOfferPrice);
     if (!Number.isSafeInteger(price) || price < 5000 || price > 500000 || price % 5000 !== 0) {
-      Alert.alert("السعر غير صحيح", "اختَر سعراً من الأزرار، والزيادة تكون 5,000 دينار.");
+      Alert.alert("السعر غير صحيح", "استخدم زر + لزيادة الأجرة بمقدار 5,000 دينار.");
       return;
     }
     setBusy("quote");
@@ -462,16 +462,18 @@ export function IncomingRequestModal() {
               )}
               <Text style={{ color: palette.ink, fontSize: 12, fontWeight: "900", textAlign: "right", marginTop: 12 }}>اختَر أجرتك (دينار عراقي)</Text>
               <Text style={{ color: palette.brand, fontSize: 23, fontWeight: "900", textAlign: "center", marginTop: 5 }}>{Number(largeOfferPrice).toLocaleString("en")} د.ع</Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 10, justifyContent: "center" }}>
-                {[60000, 75000, 100000, 125000, 150000].map((value) => (
-                  <TouchableOpacity key={value} onPress={() => setLargeOfferPrice(String(value))} disabled={Boolean(busy)} style={{ paddingVertical: 9, paddingHorizontal: 11, borderRadius: 11, borderWidth: 1, borderColor: Number(largeOfferPrice) === value ? palette.brand : palette.line, backgroundColor: Number(largeOfferPrice) === value ? palette.brandSoft : palette.surface }}>
-                    <Text style={{ color: Number(largeOfferPrice) === value ? palette.brand : palette.ink, fontSize: 12, fontWeight: "900" }}>{value / 1000} ألف</Text>
-                  </TouchableOpacity>
-                ))}
+              <View style={{ flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", marginTop: 8 }}>
+                <TouchableOpacity
+                  onPress={() => setLargeOfferPrice(String(Math.min(500000, Number(largeOfferPrice || 60000) + 5000)))}
+                  disabled={Boolean(busy) || Number(largeOfferPrice) >= 500000}
+                  accessibilityRole="button"
+                  accessibilityLabel="زيادة الأجرة خمسة آلاف دينار"
+                  style={{ width: 46, height: 46, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: palette.gold, opacity: busy || Number(largeOfferPrice) >= 500000 ? 0.5 : 1, elevation: 2 }}
+                >
+                  <Text style={{ color: palette.brandDeep, fontWeight: "900", fontSize: 29, lineHeight: 34 }}>＋</Text>
+                </TouchableOpacity>
+                <Text style={{ color: palette.muted, fontSize: 10, marginRight: 10 }}>كل ضغطة تزيد 5,000 د.ع</Text>
               </View>
-              <TouchableOpacity onPress={() => setLargeOfferPrice(String(Math.min(500000, Number(largeOfferPrice || 60000) + 5000)))} disabled={Boolean(busy) || Number(largeOfferPrice) >= 500000} style={{ marginTop: 9, borderRadius: 12, paddingVertical: 12, alignItems: "center", backgroundColor: palette.gold, opacity: busy || Number(largeOfferPrice) >= 500000 ? 0.5 : 1 }}>
-                <Text style={{ color: palette.brandDeep, fontWeight: "900", fontSize: 15 }}>＋ زيادة 5,000 دينار</Text>
-              </TouchableOpacity>
               <Text style={{ color: palette.muted, fontSize: 10, textAlign: "center", marginTop: 5 }}>أعلى أجرة مسموحة 500,000 دينار</Text>
               <TextInput
                 value={largeOfferMessage}
