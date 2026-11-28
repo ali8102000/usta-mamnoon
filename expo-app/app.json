@@ -9,9 +9,9 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/mamnoon-logo.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#f7f8f5"
+      "image": "./assets/mamnoon-launch.webp",
+      "resizeMode": "cover",
+      "backgroundColor": "#0800ff"
     },
     "ios": {
       "supportsTablet": true,
