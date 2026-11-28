@@ -1571,6 +1571,30 @@ export default function RequestDetail() {
       setCancelError(cancelReason === "سبب آخر" ? "اكتب سبباً مختصراً حتى نكمل الإلغاء." : "اختَر سبب الإلغاء أولاً.");
       return;
     }
+    if (isProvider) {
+      const { data: penaltyPreview, error: penaltyError } = await (supabase as any).rpc("get_provider_cancellation_penalty_preview", { _request_id: id });
+      if (penaltyError) {
+        setCancelError("تعذر احتساب غرامة الإلغاء الآن. حدّث الطلب وحاول مرة أخرى حتى تظهر لك قيمة الخصم قبل التأكيد.");
+        return;
+      }
+      const penaltyAmount = Number(penaltyPreview?.penalty_amount_iqd ?? 0);
+      if (penaltyPreview?.enabled && penaltyAmount > 0) {
+        const appliedPercent = Number(penaltyPreview.applied_percent ?? 0);
+        const stageLabel = penaltyPreview.stage === "half" ? "نصف الغرامة خلال المدة المحددة" : "الغرامة كاملة بعد انتهاء المدة";
+        const confirmed = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            "تأكيد إلغاء الطلب",
+            `سيتم احتساب ${penaltyAmount.toLocaleString("ar-IQ")} د.ع (${appliedPercent}% من قيمة الطلب). ${stageLabel}. هل تريد المتابعة؟`,
+            [
+              { text: "تراجع", style: "cancel", onPress: () => resolve(false) },
+              { text: "تأكيد الإلغاء والخصم", style: "destructive", onPress: () => resolve(true) },
+            ],
+            { cancelable: true, onDismiss: () => resolve(false) },
+          );
+        });
+        if (!confirmed) return;
+      }
+    }
     setCancelBusy(true);
     setCancelError("");
     try {
