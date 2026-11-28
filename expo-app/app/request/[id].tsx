@@ -735,11 +735,20 @@ export default function RequestDetail() {
       return;
     }
     let mounted = true;
+    let trackingStopped = false;
     let subscription: Location.LocationSubscription | null = null;
+    const stopTrackingForInactiveRequest = () => {
+      if (trackingStopped) return;
+      trackingStopped = true;
+      subscription?.remove();
+      void import("@/lib/background-location")
+        .then(({ stopMamnoonBackgroundLocation }) => stopMamnoonBackgroundLocation())
+        .catch((stopError) => console.warn("[Mamnoon] could not stop inactive-request tracking:", stopError));
+    };
     const role = isCustomer ? "customer" : "provider";
 
     const publishLocation = async (location: Location.LocationObject) => {
-      if (!mounted) return;
+      if (!mounted || trackingStopped) return;
       const latitude = location.coords.latitude;
       const longitude = location.coords.longitude;
       const timestamp = new Date(location.timestamp || Date.now()).toISOString();
@@ -763,6 +772,12 @@ export default function RequestDetail() {
       }, { onConflict: "request_id,user_id" });
       if (error) {
         console.warn("[Mamnoon] live location update failed:", error.message);
+        // A terminal request status can race with one last queued GPS sample.
+        // Stop both foreground and background writers instead of retrying stale
+        // coordinates against a request that is no longer active.
+        if (error.message?.includes("live_tracking_request_not_active")) {
+          stopTrackingForInactiveRequest();
+        }
         return;
       }
 
@@ -802,6 +817,7 @@ export default function RequestDetail() {
         const first = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         if (!mounted) return;
         await publishLocation(first);
+        if (!mounted || trackingStopped) return;
 
         // Foreground GPS tracking must work even when Android's optional
         // background permission is denied.
@@ -809,6 +825,7 @@ export default function RequestDetail() {
           { accuracy: Location.Accuracy.High, timeInterval: 4000, distanceInterval: 5 },
           (location) => { void publishLocation(location); },
         );
+        if (trackingStopped) return;
 
         const { startMamnoonBackgroundLocation } = await import("@/lib/background-location");
         try {
