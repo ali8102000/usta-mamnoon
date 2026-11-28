@@ -91,6 +91,18 @@ jobs:
           console.log('Expo identity and Maps environment validated (key value hidden)');
           NODE
 
+      - name: Convert launch image to Android-compatible PNG
+        run: |
+          python3 -m pip install --quiet Pillow
+          python3 - <<'PY'
+          from PIL import Image
+          source = "assets/mamnoon-launch.webp"
+          target = "assets/mamnoon-launch.png"
+          with Image.open(source) as image:
+              image.convert("RGB").save(target, format="PNG", optimize=True)
+          print(f"Created {target} from the approved Mamnoon launch image")
+          PY
+
       - name: Generate native Android project
         env:
           CI: "1"
