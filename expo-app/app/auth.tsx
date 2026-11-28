@@ -55,7 +55,7 @@ export default function AuthScreen() {
     if (busy) return;
     const normalized = normalizePhone(phoneInput);
     if (!isValidPhone(normalized)) {
-      Alert.alert("رقم الهاتف غير صحيح", "أدخل رقم هاتف عراقي يبدأ بـ 07 ويتكوّن من 11 رقماً.");
+      Alert.alert("رقم الهاتف غير صحيح", "أدخل رقم هاتف يبدأ بـ 07 ويتكوّن من 11 رقماً.");
       return;
     }
     setBusy(true);
@@ -84,7 +84,7 @@ export default function AuthScreen() {
     const code = toEnglishDigits(otp).replace(/\D/g, "");
     if (!isValidPhone(normalized)) {
       setStep("phone");
-      Alert.alert("رقم الهاتف غير صحيح", "أعد إدخال رقم هاتف عراقي صحيح.");
+      Alert.alert("رقم الهاتف غير صحيح", "أعد إدخال رقم هاتف صحيح.");
       return;
     }
     if (!/^\d{6}$/.test(code)) {
@@ -179,12 +179,12 @@ export default function AuthScreen() {
           <View style={styles.form}>
             <Text style={styles.heading}>{step === "phone" ? "تسجيل الدخول برقم الهاتف" : "تأكيد رقم الهاتف"}</Text>
             <Text style={styles.description}>{step === "phone"
-              ? "أدخل رقم هاتفك العراقي وسنرسل لك رمز تحقق برسالة نصية."
+              ? "أدخل رقمك وسنرسل لك رمز تحقق برسالة نصية."
               : "أدخل رمز التحقق الذي وصل برسالة نصية إلى رقمك."}</Text>
 
             {step === "phone" ? (
               <View style={styles.field}>
-                <Text style={styles.fieldLabel}>رقم الهاتف العراقي</Text>
+                <Text style={styles.fieldLabel}>رقم الهاتف</Text>
                 <View style={styles.inputWrap}>
                   <RealInput
                     value={phoneInput}
